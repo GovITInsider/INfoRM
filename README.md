@@ -25,111 +25,114 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 
 ## Getting Started
 
-### Prerequisites
+### Installation
 
-- Python 3.9+
-- systemd (for running as a service)
-- Root/sudo access (for initial setup)
+The recommended way to install INfoRM is by using the included installation script.
 
-### 1. Installation from Source
+#### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/INfoRM.git
 cd INfoRM
-
-python -m venv venv
-source venv/bin/activate
-
-pip install -r requirements.txt
 ```
 
-### 2. Configuration
+#### 2. Run the Installation Script 
 
 ```bash
-cp config/config.yaml.example config/config.yaml
-cp .env.example .env
+sudo bash scripts/install.sh
+```
+This script automates the following tasks:
+- Creates a dedicated system user (`inform`)
+- Copies the application to `/opt/inform-ng`
+- Sets up a Python virtual environment and installs dependencies
+- Creates `data/` and `logs/` directories
+- Initializes the database
+- Copies example configuration files (`config.yaml` and `.env`)
+- Installs and starts the systemd services
+
+#### 3. Configure INfoRM
+
+After installation, edit the configuration files:
+```bash
+sudo nano /opt/inform-ng/config/config.yaml
+sudo nano /opt/inform-ng/.env
 ```
 
-Edit the following files:
-- config/config.yaml - Configure general settings, monitoring, and web options
-- .env - Add your secret key (__IMPORTANT__):
-```env
-SECURITY__SECRET_KEY=your-very-long-random-secret-here
-```
+**Important:** Set a strong, unique value for SECURITY__SECRET_KEY in the `.env` file.
 
-### 3. Create Admin User
+
+#### 4. Create Admin User
 
 ```bash
-python -m inform.cli.main create-admin
+cd /opt/inform-ng
+sudo -u inform ./venv/bin/python -m inform.cli.main create-admin
 ```
 
-### 4. Running INfoRM
+#### 5. Access the Web Interface
 
-__Development__ (with auto-reload)
-```bash
-uvicorn web.main:app --reload
+Open your browser and go to:
 ```
-
-__Production__ (recommended):
-```bash
-sudo systemctl start inform-web.service
-sudo systemctl start inform-monitor.service
+http://your-server-ip:8000/manage
 ```
+Log in using the admin credentials you created in the previous step.
 
-Enable services to start on boot:
-```bash
-sudo systemctl enable inform-web.service
-sudo systemctl enable inform-monitor.service
-```
+## Access the Web Interface
 
-Check status:
-```bash
-sudo systemctl status inform-web.service
-sudo systemctl status inform-monitor.service
-```
+- **NOC View:** http://your-server:8000/noc
+- **Devices Page:** http://your-server:8000/devices
+- **Management GUI:** http://your-server:8000/manage
 
-### Access the Web Interface
+## Configuration
 
-- __NOC View:__ http://your-server:8000/noc
-- __Devices Page:__ http://your-server:8000/devices
-- __Management GUI:__ http://your-server:8000/manage
+INfoRM uses two configuration files:
+- config/config.yaml - General settings (monitoring intervals, auto-refresh, etc.)
+- .env - Sensitive values (secret key used for authentication)
 
-### Configuration
+After running the installation script, both files are created from example templates. You should review and customize them before using the system in production.
 
-Main configuration is split between two files:
-- config/config.yaml - Non-sensitive settings (refresh intervals, monitoring thresholds, etc.)
-- .env - Sensitive values (especially the secret key)
+## Usage
 
-Key settings:
-- SECURITY__SECRET_KEY (in .env) — Required for authentication
-- web.noc_auto_refresh_seconds — Auto-refresh interval for the NOC page
-- monitoring.countbeforealarm — Number of failed pings before marking a device as Down
+### Management GUI (Recommended)
 
-### Usage
+The web interface at /manage is the easiest way to manage buildings and devices.
 
-#### Management GUI (Recommended)
+### CLI Tools
 
-Log in at /manage to manage buildings and devices.
-
-#### CLI Tools
+You can also manage INfoRM using the command-line interface:
 
 ```bash
-python -m inform.cli.main --help
+cd /opt/inform-ng
+sudo -u inform ./venv/bin/python -m inform.cli.main --help
 ```
 
 Common commands:
 - create-admin
 - add-device
 - list-devices
-- edit-devices <ip>
+- edit-device <ip>
 - search-devices <term>
 
-#### Project Structure
+### Managing the Services
+```bash
+# Check status
+sudo systemctl status inform-web
+sudo systemctl status inform-monitor
+
+# Restart services
+sudo systemctl restart inform-web
+sudo systemctl restart inform-monitor
+
+# View logs
+sudo journalctl -u inform-web -f
+sudo journalctl -u inform-monitor -f
+```
+
+## Project Structure
 
 ```
 INfoRM/
 ├── inform/                 # Core application logic
-│   ├── cli/                # Command-line interface
+│   ├── cli/                # Command-line tools
 │   ├── core/               # Database, models, monitoring, auth
 │   └── version.py
 ├── web/                    # FastAPI web application
@@ -139,14 +142,16 @@ INfoRM/
 ├── config/                 # Configuration files
 ├── data/                   # SQLite database (created at runtime)
 ├── logs/                   # Application logs
-└── systemd/                # systemd service files
+├── scripts/                # Installation and helper scripts
+└── systemd/                # systemd service unit files
 ```
 
-#### License
+## License
 This project is licensed under the MIT License (LICENSE).
 
-#### Version
-Current version: 1.0.0For detailed usage instructions, refer to the in-app Help page after logging into the management interface.
+## Version
+Current version: 1.0.0
+For detailed usage instructions, refer to the in-app Help page after logging into the management interface.
 
-#### Contributing
+## Contributing
 Contributions are welcome! Please open an issue first to discuss major changes.
