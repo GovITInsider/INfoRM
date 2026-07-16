@@ -138,6 +138,7 @@ def add_device(
     name: str = typer.Option("", prompt=True, help="Device name (optional)"),
     building: str = typer.Option("", prompt=True, help="Building name"),
     location: str = typer.Option("", prompt=True, help="Location (e.g. Closet 1, MDF)"),
+    comment: str = typer.Option("", prompt=True, help="Comments or Description"),
     profile: str = typer.Option("", help="SNMP profile name to link (optional)"),
     monitored: bool = typer.Option(True, help="Whether to monitor this device"),
 ):
@@ -176,6 +177,7 @@ def add_device(
             name=name or None,
             building=building or None,
             location=location or None,
+            comment=comment or None,
             credential_profile_id=profile_id,
             monitored=monitored,
         )
@@ -221,6 +223,7 @@ def list_devices(
         table.add_column("Name")
         table.add_column("Building")
         table.add_column("Location")
+        table.add_column("Comment")
         table.add_column("Status")
         table.add_column("Monitored")
 
@@ -237,6 +240,7 @@ def list_devices(
                 d.name or "-",
                 d.building or "-",
                 d.location or "-",
+                d.comment or "-",
                 f"[{status_color}]{d.status}[/{status_color}]",
                 "Yes" if d.monitored else "No",
             )
@@ -273,6 +277,7 @@ def show_device(
         rprint(f"{'Name:':<20} {device.name or '-'}")
         rprint(f"{'Building:':<20} {device.building or '-'}")
         rprint(f"{'Location:':<20} {device.location or '-'}")
+        rprint(f"{'Comment:':<20} {device.comment or '-'}")
         rprint(f"{'Status:':<20} {device.status}")
         rprint(f"{'Monitored:':<20} {'Yes' if device.monitored else 'No'}")
         rprint(f"{'Failure Count:':<20} {device.failure_count}")
@@ -309,6 +314,7 @@ def edit_device(ip: str = typer.Argument(..., help="IP address of the device to 
         new_name = typer.prompt("Name", default=device.name or "")
         new_building = typer.prompt("Building", default=device.building or "")
         new_location = typer.prompt("Location", default=device.location or "")
+        new_comment = typer.prompt("Comment / Description", default=devide.comment or "")
         new_monitored = typer.confirm("Monitored?", default=device.monitored)
 
         # Check for duplicate asset tag (if changed)
@@ -321,6 +327,7 @@ def edit_device(ip: str = typer.Argument(..., help="IP address of the device to 
         device.name = new_name or None
         device.building = new_building or None
         device.location = new_location or None
+        device.comment = new_comment or None
         device.monitored = new_monitored
 
         db.commit()
@@ -348,7 +355,8 @@ def search_devices(
             Device.name.ilike(f"%{query}%") |
             Device.asset_tag.ilike(f"%{query}%") |
             Device.building.ilike(f"%{query}%") |
-            Device.location.ilike(f"%{query}%")
+            Device.location.ilike(f"%{query}%") |
+            Device.comment.ilike(f"%{query}%")
         )
         q = q.filter(search_filter)
 
@@ -367,6 +375,7 @@ def search_devices(
         table.add_column("Name")
         table.add_column("Building")
         table.add_column("Location")
+        table.add_column("Comment")
         table.add_column("Status")
         table.add_column("Monitored")
 
@@ -383,6 +392,7 @@ def search_devices(
                 d.name or "-",
                 d.building or "-",
                 d.location or "-",
+                d.comment or "-",
                 f"[{status_color}]{d.status}[/{status_color}]",
                 "Yes" if d.monitored else "No",
             )

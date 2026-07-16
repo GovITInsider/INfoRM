@@ -9,6 +9,7 @@ from inform.core.models import Device, Building, AlarmEvent
 from inform.core.config import settings
 from inform.core.auth import manager, verify_password, load_user
 from inform.version import __version__
+from inform.core.timeutils import to_local
 
 from inform.core.database import ensure_db_permissions
 from starlette.responses import RedirectResponse
@@ -31,6 +32,9 @@ templates = Environment(
 )
 templates.globals["app_version"] = __version__
 
+# enable url_for in templates
+templates.globals["url_for"] = app.url_path_for
+
 # ========================
 # Helper
 # ========================
@@ -42,6 +46,7 @@ def device_to_dict(device):
         "name": device.name or "-",
         "building": device.building or "-",
         "location": device.location or "-",
+        "comment": device.comment or "-",
         "status": device.status,
         "failure_count": device.failure_count,
         "response_time": device.response_time,
@@ -73,7 +78,7 @@ async def landing_page(request: Request):
 
 
 # ========================
-# Hybrid NOC View (Public)
+# NOC View (Public)
 # ========================
 @app.get("/noc", response_class=HTMLResponse)
 async def noc_page(request: Request):
@@ -165,6 +170,21 @@ async def devices_page(request: Request):
     db = SessionLocal()
     try:
         devices = db.query(Device).all()
+    
+        # Convert last_checked to local time
+        for d in devices:
+            d.last_checked = to_local(d.last_checked)
+
+        # default sort by status
+        severity = {
+                "down": 0,
+                "pre-alarm": 1,
+                "unknown": 2,
+                "up": 3
+        }
+        devices.sort(key=lambda d: (severity.get(d.status, 99), d.name or d.ip_address or ""))
+        # end sorting
+
         device_list = [device_to_dict(d) for d in devices]
 
         return templates.get_template("devices.html").render(
@@ -185,6 +205,12 @@ async def alarm_history(request: Request):
             .limit(100)
             .all()
         )
+
+        #convert timestamp to local time
+        for event in events:
+            event.timestamp = to_local(event.timestamp)
+
+
         return templates.get_template("history.html").render(
             request=request,
             events=events
@@ -202,7 +228,7 @@ async def about_page(request: Request):
     return templates.get_template("about.html").render(request=request)
 
 # ========================
-# Health Check
+# Health Check - helpful we secuting behind a load balancer...
 # ========================
 
 @app.get("/health")
@@ -263,7 +289,7 @@ async def logout():
 
 
 # ========================
-# Protected Route (simple and reliable)
+# Protected Route 
 # ========================
 
 @app.get("/manage", response_class=HTMLResponse)
@@ -375,21 +401,32 @@ async def save_device(
     name: str = Form(""),
     building: str = Form(...),
     location: str = Form(""),
+    comment: str = Form(""),
     monitored: bool = Form(False),
     device_id: int = Form(None),
     user=Depends(manager)
 ):
     db = SessionLocal()
     try:
+        # ========== TEMPORARY DEBUG ==========
+        #print("=== SAVE DEVICE DEBUG ===")
+        #print(f"device_id     = {device_id}")
+        #print(f"ip_address    = {ip_address}")
+        #print(f"comment received from form = '{comment}'")
+        # =======================================================
+
         if device_id:  # Editing
             device = db.query(Device).filter(Device.id == device_id).first()
             if device:
+                #print(f"Found device: {device.ip_address}")          # for debug
                 device.ip_address = ip_address.strip()
                 device.asset_tag = asset_tag.strip() if asset_tag else None
                 device.name = name.strip() if name else None
                 device.building = building
                 device.location = location.strip() if location else None
+                device.comment = comment.strip() if comment else None
                 device.monitored = monitored
+                #print(f"Set device.comment to: '{device.comment}'")  # for debug
         else:  # Adding new
             existing = db.query(Device).filter(Device.ip_address == ip_address.strip()).first()
             if existing:
@@ -408,6 +445,7 @@ async def save_device(
                 name=name.strip() if name else None,
                 building=building,
                 location=location.strip() if location else None,
+                comment=comment.strip() if comment else None,
                 monitored=monitored
             )
             db.add(device)
@@ -418,12 +456,13 @@ async def save_device(
         db.rollback()
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
-        return templates.get_template("manage/devices.html").render(
+        html = templates.get_template("manage/devices.html").render(
             request=request,
             devices=devices,
             buildings=buildings,
             error=str(e)
         )
+        return HTMLResponse(content=html, status_code=200)
     finally:
         db.close()
 

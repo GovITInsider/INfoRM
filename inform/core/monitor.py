@@ -129,7 +129,8 @@ def process_device(device: Device, is_up: bool, response_time: float | None):
 
             db_device.status = new_status
 
-        db_device.last_checked = datetime.utcnow()
+        from datetime import datetime, timezone
+        db_device.last_checked = datetime.now(timezone.utc)
         db.commit()
 
     except Exception as e:

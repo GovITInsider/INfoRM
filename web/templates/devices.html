@@ -5,6 +5,21 @@
 {% block content %}
 <h1 class="mb-4">Device Dashboard</h1>
 
+<style>
+    .table td.text-nowrap,
+    .table th.text-nowrap {
+        white-space: nowrap;
+    }
+
+    /* Prevent the comment column from growing too wide */
+    .table td[title] {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+</style>
+
+
 <!-- Top Controls -->
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <!-- Search -->
@@ -22,7 +37,7 @@
 
     <!-- Auto-refresh Toggle -->
     <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" id="autoRefreshToggle">
+        <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
         <label class="form-check-label" for="autoRefreshToggle">
             <span class="refresh-indicator" id="refresh-status">
                 Auto-refresh: <span class="text-success">ON</span> ({{ auto_refresh_seconds }}s)
@@ -47,13 +62,14 @@
     			<tr>
         			<th class="sortable" onclick="sortTable(0)">Asset Tag <span class="sort-arrow"></span></th>
         			<th class="sortable" onclick="sortTable(1)">IP <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(2)">Name <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(3)">Building <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(2)" style="cursor: pointer;" class="text-nowrap">Name <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(3)" style="cursor: pointer;" class="text-nowrap">Building <span class="sort-arrow"></span></th>
         			<th class="sortable" onclick="sortTable(4)">Location <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(5)">Status <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(6)">Monitored <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(7)">Failures <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(8)">Last Checked <span class="sort-arrow"></span></th>
+				<th class="sortable" onclick="sortTable(5)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(6)">Status <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(7)">Monitored <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(8)">Failures <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(9)">Last Checked<span class="sort-arrow"></span></th>
     			</tr>
 		</thead>
                 <tbody>
@@ -61,9 +77,16 @@
                     <tr data-monitored="{{ 'yes' if device.monitored else 'no' }}">
 			<td>{{ device.asset_tag }}</td>
                         <td>{{ device.ip_address }}</td>
-                        <td>{{ device.name or '-' }}</td>
-                        <td>{{ device.building or '-' }}</td>
+			<td class="text-nowrap">{{ device.name or '-' }}</td>
+                        <td class="text-nowrap">{{ device.building or '-' }}</td>
                         <td>{{ device.location or '-' }}</td>
+			<td style="max-width: 180px;" title="{{ device.comment or '' }}">
+			    {% if device.comment %}
+			        {{ device.comment[:20] }}{% if device.comment|length > 20 %}...{% endif %}
+			    {% else %}
+			        -
+			    {% endif %}
+			</td>
                         <td>
                             {% if device.status == 'up' %}
                                 <span class="badge bg-success">UP</span>
@@ -83,7 +106,20 @@
         		    {% endif %}
     			</td>
                         <td>{{ device.failure_count }}</td>
-                        <td>{{ device.last_checked or 'Never' }}</td>
+			<td title="{% if device.last_checked %}{{ device.last_checked }}{% endif %}">
+    			    {% if device.last_checked %}
+        			{% if device.last_checked is string %}
+            			    {# Handle string format: "2026-08-10 21:09:25.123456" or similar #}
+            			    {{ device.last_checked.split(' ')[1][:8] if ' ' in device.last_checked else device.last_checked }}
+        			{% else %}
+            			    {{ device.last_checked.strftime('%H:%M:%S') }}
+        			{% endif %}
+    			    {% else %}
+        			Never
+    			    {% endif %}
+			</td>
+			</td>
+			</td>
                     </tr>
                     {% endfor %}
                 </tbody>

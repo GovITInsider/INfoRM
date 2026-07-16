@@ -15,6 +15,7 @@ monitoring:
 web:
   auto_refresh_seconds: 30
   noc_auto_refresh_seconds: 30
+  local_timezone: "America/Los_Angeles"
 
 security:
   secret_key: "CHANGE_ME_IN_.env"     # ← placeholder only

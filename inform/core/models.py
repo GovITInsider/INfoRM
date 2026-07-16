@@ -56,6 +56,7 @@ class Device(Base):
     name: Mapped[Optional[str]] = mapped_column(String(100))
     building: Mapped[Optional[str]] = mapped_column(String(100))
     location: Mapped[Optional[str]] = mapped_column(String(100))
+    comment: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     credential_profile_id: Mapped[Optional[int]] = mapped_column(ForeignKey("credential_profiles.id"))
     monitored: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(20), default="unknown")
