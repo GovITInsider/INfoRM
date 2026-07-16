@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{% block manage_title %}Management{% endblock %} - INfoRM{% endblock %}
+
+{% block content %}
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/manage">INfoRM Management</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#manageNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="manageNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link {% if request.url.path == '/manage' %}active{% endif %}" href="/manage">Dashboard</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.url.path == '/manage/buildings' %}active{% endif %}" href="/manage/buildings">Buildings</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.url.path == '/manage/devices' %}active{% endif %}" href="/manage/devices">Devices</a>
+                </li>
+            </ul>
+            <div class="d-flex">
+                <a href="/manage/logout" class="btn btn-outline-light btn-sm">Logout</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <!-- Flash Messages -->
+    {% if request.query_params.get('success') %}
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        {{ request.query_params.get('success') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    {% if request.query_params.get('error') %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        {{ request.query_params.get('error') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    {% block manage_content %}{% endblock %}
+</div>
+{% endblock %}

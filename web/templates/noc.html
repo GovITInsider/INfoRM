@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}INfoRM NOC{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>NOC View</h1>
+
+        {% if noc_auto_refresh_seconds and noc_auto_refresh_seconds > 0 %}
+        <div class="text-end">
+            <div>
+                <small class="text-muted">
+                    Auto-refreshing in <span id="countdown">{{ noc_auto_refresh_seconds }}</span>s
+                </small>
+            </div>
+            <div>
+                <small class="text-muted" id="last-refreshed"></small>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Status Summary Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card text-white {% if stats.up > 0 %}bg-success{% else %}bg-secondary{% endif %} py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Up</h6>
+                    <h3 class="mb-0">{{ stats.up }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-white {% if stats.pre_alarm > 0 %}bg-warning{% else %}bg-secondary{% endif %} py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Pre-Alarm</h6>
+                    <h3 class="mb-0">{{ stats.pre_alarm }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-white {% if stats.down > 0 %}bg-danger{% else %}bg-secondary{% endif %} py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Down</h6>
+                    <h3 class="mb-0">{{ stats.down }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-white bg-secondary py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Total</h6>
+                    <h3 class="mb-0">{{ stats.total }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overall Response Time Stats -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Min Response Time</h6>
+                    <h4 class="mb-0 text-info">{{ stats.min_rtt or '-' }} ms</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Avg Response Time</h6>
+                    <h4 class="mb-0 text-info">{{ stats.avg_rtt or '-' }} ms</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card py-2">
+                <div class="card-body text-center p-2">
+                    <h6 class="card-title mb-1">Max Response Time</h6>
+                    <h4 class="mb-0 text-info">{{ stats.max_rtt or '-' }} ms</h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Problem Buildings -->
+    {% if problem_tiles %}
+    <h4 class="mb-3 text-danger">Buildings with Issues</h4>
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-3 mb-4">
+        {% for tile in problem_tiles %}
+        <div class="col">
+            <div class="card h-100 border-{{ tile.color }} border-2 shadow-sm">
+                <div class="card-body text-center p-3">
+                    <h5 class="card-title mb-2">{{ tile.name }}</h5>
+                    <div class="fs-5 fw-bold text-{{ tile.color }} mb-2">{{ tile.status_text }}</div>
+                    <div class="small text-muted mb-1">{{ tile.total }} devices</div>
+
+                    {% if tile.avg_rtt %}
+                    <div class="small">
+                        <span class="text-muted">Avg RTT (Up):</span> <strong>{{ tile.avg_rtt }} ms</strong>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Healthy Buildings -->
+    {% if healthy_tiles %}
+    <h4 class="mb-3 text-success">Healthy Buildings ({{ healthy_tiles|length }})</h4>
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Building</th>
+                        <th class="text-end">Devices</th>
+                        <th class="text-end">Avg Response Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tile in healthy_tiles %}
+                    <tr>
+                        <td>{{ tile.name }}</td>
+                        <td class="text-end">{{ tile.total }}</td>
+                        <td class="text-end">
+                            {% if tile.avg_rtt %}
+                                {{ tile.avg_rtt }} ms
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Footer -->
+    <div class="mt-4 pt-3 border-top">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <small class="text-muted">INfoRM v{{ app_version }}</small>
+            </div>
+            <div>
+                <span class="badge bg-secondary">End of List</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{% if noc_auto_refresh_seconds and noc_auto_refresh_seconds > 0 %}
+<script>
+    // === Auto-Refresh Countdown ===
+    let timeLeft = {{ noc_auto_refresh_seconds }};
+
+    function updateCountdown() {
+        const el = document.getElementById('countdown');
+        if (el) el.textContent = timeLeft;
+    }
+
+    function startCountdown() {
+        updateCountdown();
+        const interval = setInterval(() => {
+            timeLeft--;
+            updateCountdown();
+
+            if (timeLeft <= 0) {
+                clearInterval(interval);
+                location.reload();
+            }
+        }, 1000);
+    }
+
+    const lastRefreshedEl = document.getElementById('last-refreshed');
+    if (lastRefreshedEl) {
+        const now = new Date();
+        lastRefreshedEl.textContent = 'Last refreshed: ' + now.toLocaleTimeString();
+    }
+
+    startCountdown();
+</script>
+{% endif %}
+{% endblock %}

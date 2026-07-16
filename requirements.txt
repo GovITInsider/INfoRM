@@ -1,0 +1,17 @@
+typer[all]>=0.12
+pydantic>=2.0
+sqlalchemy>=2.0
+pysnmp>=7.1
+icmplib>=3.0
+pyyaml>=6.0
+python-dotenv>=1.0
+rich>=13.0
+pycryptodomex>=3.20
+
+# Web Framework
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+fastapi-login==1.10.3
+pydantic-settings==2.14.2
+passlib==1.7.4
