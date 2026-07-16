@@ -1,0 +1,85 @@
+INfoRM Installation Guide
+=========================
+
+This document explains how to install INfoRM from the source package.
+
+Prerequisites
+-------------
+- A Linux server running Ubuntu 22.04+ or Debian 11+ (systemd is required)
+- Python 3.9 or newer
+- Root or sudo privileges
+
+Installation Steps
+------------------
+
+1. Extract the archive
+   --------------------
+   tar -xzvf inform-ng-v1.0.tar.gz
+   cd inform-ng
+
+2. Run the installation script
+   ----------------------------
+   sudo bash scripts/install.sh
+
+   This will:
+   - Create a dedicated system user called "inform"
+   - Set up the Python virtual environment
+   - Install all required dependencies
+   - Initialize the database
+   - Install and enable the systemd services
+
+3. Verify the services
+   --------------------
+   After installation, check that both services are running:
+
+       sudo systemctl status inform-monitor
+       sudo systemctl status inform-web
+
+   Both should show as "active (running)".
+
+4. Access INfoRM
+   --------------
+   Open a web browser and go to:
+
+       http://your-server-ip:8000
+
+   You should see the INfoRM landing page.
+
+Next Steps
+----------
+- Use the CLI to add devices:
+      source /opt/inform-ng/venv/bin/activate
+      python -m inform.cli.main add-device
+
+- Visit the NOC View for a high-level overview of your buildings.
+- Visit the Devices page to manage and search devices.
+- Read the Help page in the web interface for detailed explanations.
+
+Configuration
+-------------
+The main configuration file is located at:
+
+    config/config.yaml
+
+After making changes, restart the services:
+
+    sudo systemctl restart inform-web
+    sudo systemctl restart inform-monitor
+
+Uninstalling INfoRM
+-------------------
+To completely remove INfoRM:
+
+    sudo systemctl stop inform-monitor inform-web
+    sudo systemctl disable inform-monitor inform-web
+    sudo rm /etc/systemd/system/inform-*.service
+    sudo systemctl daemon-reload
+    sudo userdel inform
+    sudo rm -rf /opt/inform-ng
+
+Support
+-------
+For help using INfoRM, please refer to the built-in Help page
+accessible from the web interface.
+
+Version: 1.0.0

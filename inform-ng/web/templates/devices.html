@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}Device Dashboard{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Device Dashboard</h1>
+
+<!-- Top Controls -->
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <!-- Search -->
+    <div class="input-group" style="width: 260px; max-width: 100%;">
+        <span class="input-group-text">🔍</span>
+        <input type="text" class="form-control" id="searchInput" placeholder="Search devices..." onkeyup="filterTable()">
+    </div>
+
+    <!-- Monitored Filter -->
+    <select class="form-select" id="monitoredFilter" onchange="filterTable()" style="width: 160px; max-width: 100%;">
+        <option value="all" selected>All Devices</option>
+        <option value="yes">Monitored Only</option>
+        <option value="no">Unmonitored Only</option>
+    </select>
+
+    <!-- Auto-refresh Toggle -->
+    <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="autoRefreshToggle">
+        <label class="form-check-label" for="autoRefreshToggle">
+            <span class="refresh-indicator" id="refresh-status">
+                Auto-refresh: <span class="text-success">ON</span> ({{ auto_refresh_seconds }}s)
+            </span>
+        </label>
+    </div>
+
+    <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+        Refresh Now
+    </button>
+</div>
+
+<!-- Devices Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">Monitored Devices</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="devicesTable">
+		    <thead class="table-light">
+    			<tr>
+        			<th class="sortable" onclick="sortTable(0)">Asset Tag <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(1)">IP <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(2)">Name <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(3)">Building <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(4)">Location <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(5)">Status <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(6)">Monitored <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(7)">Failures <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(8)">Last Checked <span class="sort-arrow"></span></th>
+    			</tr>
+		</thead>
+                <tbody>
+                    {% for device in devices %}
+                    <tr data-monitored="{{ 'yes' if device.monitored else 'no' }}">
+			<td>{{ device.asset_tag }}</td>
+                        <td>{{ device.ip_address }}</td>
+                        <td>{{ device.name or '-' }}</td>
+                        <td>{{ device.building or '-' }}</td>
+                        <td>{{ device.location or '-' }}</td>
+                        <td>
+                            {% if device.status == 'up' %}
+                                <span class="badge bg-success">UP</span>
+                            {% elif device.status == 'pre-alarm' %}
+                                <span class="badge bg-warning text-dark">PRE-ALARM</span>
+                            {% elif device.status == 'down' %}
+                                <span class="badge bg-danger">DOWN</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ device.status }}</span>
+                            {% endif %}
+                        </td>
+			<td>
+       			    {% if device.monitored %}
+            			Yes
+        		    {% else %}
+            			<span class="badge bg-secondary">No</span>
+        		    {% endif %}
+    			</td>
+                        <td>{{ device.failure_count }}</td>
+                        <td>{{ device.last_checked or 'Never' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<!-- Footer -->
+<div class="mt-4 pt-3 border-top">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <small class="text-muted">
+                INfoRM v{{ app_version }} 
+            </small>
+        </div>
+        <div>
+            <span class="badge bg-secondary">End of List</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+
+<script>
+// Search + Monitored Filter
+function filterTable() {
+    const searchFilter = document.getElementById('searchInput').value.toLowerCase();
+    const monitoredFilter = document.getElementById('monitoredFilter').value;
+    const rows = document.getElementById('devicesTable').getElementsByTagName('tr');
+
+    for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const cells = row.getElementsByTagName('td');
+        const rowMonitored = row.getAttribute('data-monitored');
+
+        let searchMatch = false;
+        for (let j = 0; j < cells.length; j++) {
+            if (cells[j].textContent.toLowerCase().includes(searchFilter)) {
+                searchMatch = true;
+                break;
+            }
+        }
+
+        let monitoredMatch = true;
+        if (monitoredFilter === 'yes' && rowMonitored !== 'yes') monitoredMatch = false;
+        if (monitoredFilter === 'no' && rowMonitored !== 'no') monitoredMatch = false;
+
+        row.style.display = (searchMatch && monitoredMatch) ? '' : 'none';
+    }
+}
+
+// Column Sorting
+let currentSortColumn = -1;
+let currentSortDirection = 'asc';
+
+function sortTable(columnIndex) {
+    const table = document.getElementById('devicesTable');
+    const tbody = table.tBodies[0];
+    const rows = Array.from(tbody.rows);
+
+    if (currentSortColumn === columnIndex) {
+        currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortDirection = 'asc';
+    }
+    currentSortColumn = columnIndex;
+
+    document.querySelectorAll('.sort-arrow').forEach(el => el.textContent = '');
+    const header = table.tHead.rows[0].cells[columnIndex];
+    const arrow = header.querySelector('.sort-arrow');
+    arrow.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+
+    rows.sort((a, b) => {
+        let valA = a.cells[columnIndex].textContent.trim().toLowerCase();
+        let valB = b.cells[columnIndex].textContent.trim().toLowerCase();
+
+        if (columnIndex === 7) { // Failures column
+            valA = parseInt(valA) || 0;
+            valB = parseInt(valB) || 0;
+        }
+
+        if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
+        if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+// Auto-refresh logic
+let countdown = {{ auto_refresh_seconds | default(16) }};
+let countdownTimer = null;
+let autoRefreshEnabled = false;
+
+const toggle = document.getElementById('autoRefreshToggle');
+const statusEl = document.getElementById('refresh-status');
+
+function updateStatusText() {
+    if (!statusEl) return;
+    if (autoRefreshEnabled) {
+        statusEl.innerHTML = `Auto-refresh: <span class="text-success">ON</span> (${countdown}s)`;
+    } else {
+        statusEl.innerHTML = `Auto-refresh: <span class="text-danger">OFF</span>`;
+    }
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    countdown = {{ auto_refresh_seconds | default(16) }};
+    updateStatusText();
+    countdownTimer = setInterval(() => {
+        if (autoRefreshEnabled) {
+            countdown--;
+            updateStatusText();
+            if (countdown <= 0) location.reload();
+        }
+    }, 1000);
+}
+
+function stopAutoRefresh() {
+    if (countdownTimer) clearInterval(countdownTimer);
+}
+
+function toggleAutoRefresh() {
+    autoRefreshEnabled = toggle.checked;
+    if (autoRefreshEnabled) {
+        startAutoRefresh();
+    } else {
+        stopAutoRefresh();
+        updateStatusText();
+    }
+}
+
+if (toggle) {
+    toggle.addEventListener('change', toggleAutoRefresh);
+
+    // Initialize on page load
+    autoRefreshEnabled = toggle.checked;
+    if (autoRefreshEnabled) {
+        startAutoRefresh();
+    } else {
+        updateStatusText();   // ← This line ensures it shows OFF when unchecked
+    }
+}
+
+</script>
+{% endblock %}
