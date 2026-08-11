@@ -104,8 +104,8 @@
         <table class="table table-hover mb-0" id="devicesTable">
             <thead class="table-light">
                 <tr>
+		    <th onclick="sortTable(1)" style="cursor: pointer;">Asset Tag <span class="sort-arrow"></span></th>
                     <th onclick="sortTable(0)" style="cursor: pointer;">IP <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(1)" style="cursor: pointer;">Asset Tag <span class="sort-arrow"></span></th>
                     <th onclick="sortTable(2)" style="cursor: pointer;" class="text-nowrap">Name <span class="sort-arrow"></span></th>
                     <th onclick="sortTable(3)" style="cursor: pointer;" class="text-nowrap">Building <span class="sort-arrow"></span></th>
                     <th onclick="sortTable(4)" style="cursor: pointer;">Location <span class="sort-arrow"></span></th>
@@ -117,15 +117,27 @@
             </thead>
             <tbody>
                 {% for device in devices %}
-                <tr>
+                <tr
+		    data-asset-tag="{{ device.asset_tag or '' }}"
+    		    data-comment="{{ device.comment or '' }}"
+		    data-name="{{ device.name or '' }}"
+    		    data-building="{{ device.building or '' }}"
+    		    data-location="{{ device.location or '' }}"
+    		    data-ip="{{ device.ip_address }}">
+		    <td style="max-width: 140px;" title="{{ device.asset_tag or '' }}">
+    			{% if device.asset_tag %}
+        		    {{ device.asset_tag[:12] }}{% if device.asset_tag|length > 12 %}…{% endif %}
+    			{% else %}
+        		    -
+    			{% endif %}
+		    </td>
                     <td>{{ device.ip_address }}</td>
-                    <td>{{ device.asset_tag or '-' }}</td>
                     <td class="text-nowrap">{{ device.name or '-' }}</td>
                     <td class="text-nowrap">{{ device.building or '-' }}</td>
                     <td>{{ device.location or '-' }}</td>
-		    <td style="max-width: 280px;" title="{{ device.comment or '' }}">
+		    <td style="max-width: 180px;" title="{{ device.comment or '' }}">
     			{% if device.comment %}
-        		    {{ device.comment[:50] }}{% if device.comment|length > 50 %}…{% endif %}
+        		    {{ device.comment[:20] }}{% if device.comment|length > 20 %}…{% endif %}
     			{% else %}
         		    -
     			{% endif %}
@@ -182,13 +194,34 @@
 
 <script>
 // Search functionality
+//document.getElementById('searchInput').addEventListener('keyup', function() {
+//    const searchValue = this.value.toLowerCase();
+//    const rows = document.querySelectorAll('#devicesTable tbody tr');
+//
+//    rows.forEach(row => {
+//        const text = row.textContent.toLowerCase();
+//        row.style.display = text.includes(searchValue) ? '' : 'none';
+//    });
+//});
+// Search + Monitored Filter
+// Search functionality (standardized)
 document.getElementById('searchInput').addEventListener('keyup', function() {
     const searchValue = this.value.toLowerCase();
     const rows = document.querySelectorAll('#devicesTable tbody tr');
 
     rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(searchValue) ? '' : 'none';
+        // Combine visible text + data attributes so truncated fields remain searchable
+        const searchableText = (
+            row.textContent + ' ' +
+            (row.dataset.assetTag || '') + ' ' +
+            (row.dataset.comment || '') + ' ' +
+            (row.dataset.name || '') + ' ' +
+            (row.dataset.building || '') + ' ' +
+            (row.dataset.location || '') + ' ' +
+            (row.dataset.ip || '')
+        ).toLowerCase();
+
+        row.style.display = searchableText.includes(searchValue) ? '' : 'none';
     });
 });
 

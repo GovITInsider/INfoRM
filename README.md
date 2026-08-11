@@ -5,7 +5,7 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 ## Features
 
 - **Real-time ICMP Monitoring** — Continuously checks device reachability
-- **NOC View** — Color-coded building status with problem buildings shown as cards and healthy buildings in a compact list
+- **Hybrid NOC View** — Color-coded building status with problem buildings shown as cards and healthy buildings in a compact list
 - **Status & Response Time Dashboard** — Overview of Up / Pre-Alarm / Down devices plus Min / Avg / Max response times
 - **Web Management GUI** — Add, edit, and delete devices and buildings through a protected web interface
 - **Building Enforcement** — Devices must be assigned to existing buildings via dropdown
@@ -150,4 +150,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.1.0
+Current version: 1.1.1

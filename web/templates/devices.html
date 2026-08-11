@@ -74,8 +74,21 @@
 		</thead>
                 <tbody>
                     {% for device in devices %}
-                    <tr data-monitored="{{ 'yes' if device.monitored else 'no' }}">
-			<td>{{ device.asset_tag }}</td>
+                    <tr data-monitored="{{ 'yes' if device.monitored else 'no' }}"
+			data-asset-tag="{{ device.asset_tag or '' }}"
+    			data-comment="{{ device.comment or '' }}"
+    			data-name="{{ device.name or '' }}"
+    			data-building="{{ device.building or '' }}"
+    			data-location="{{ device.location or '' }}"
+    			data-ip="{{ device.ip_address }}">    
+
+			<td style="max-width: 140px;" title="{{ device.asset_tag or '' }}">
+    			    {% if device.asset_tag %}
+        			{{ device.asset_tag[:12] }}{% if device.asset_tag|length > 12 %}…{% endif %}
+    			    {% else %}
+        			-
+    			    {% endif %}
+			</td>
                         <td>{{ device.ip_address }}</td>
 			<td class="text-nowrap">{{ device.name or '-' }}</td>
                         <td class="text-nowrap">{{ device.building or '-' }}</td>
@@ -148,28 +161,34 @@
 // Search + Monitored Filter
 function filterTable() {
     const searchFilter = document.getElementById('searchInput').value.toLowerCase();
-    const monitoredFilter = document.getElementById('monitoredFilter').value;
-    const rows = document.getElementById('devicesTable').getElementsByTagName('tr');
+    const monitoredFilter = document.getElementById('monitoredFilter') 
+        ? document.getElementById('monitoredFilter').value 
+        : 'all';
 
-    for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const cells = row.getElementsByTagName('td');
-        const rowMonitored = row.getAttribute('data-monitored');
+    const rows = document.querySelectorAll('#devicesTable tbody tr');
 
-        let searchMatch = false;
-        for (let j = 0; j < cells.length; j++) {
-            if (cells[j].textContent.toLowerCase().includes(searchFilter)) {
-                searchMatch = true;
-                break;
-            }
-        }
+    rows.forEach(row => {
+        // Combine visible text + data attributes for full searchability
+        const searchableText = (
+            row.textContent + ' ' +
+            (row.dataset.assetTag || '') + ' ' +
+            (row.dataset.comment || '') + ' ' +
+            (row.dataset.name || '') + ' ' +
+            (row.dataset.building || '') + ' ' +
+            (row.dataset.location || '') + ' ' +
+            (row.dataset.ip || '')
+        ).toLowerCase();
+
+        const rowMonitored = row.getAttribute('data-monitored') || '';
+
+        let searchMatch = searchableText.includes(searchFilter);
 
         let monitoredMatch = true;
         if (monitoredFilter === 'yes' && rowMonitored !== 'yes') monitoredMatch = false;
         if (monitoredFilter === 'no' && rowMonitored !== 'no') monitoredMatch = false;
 
         row.style.display = (searchMatch && monitoredMatch) ? '' : 'none';
-    }
+    });
 }
 
 // Column Sorting
