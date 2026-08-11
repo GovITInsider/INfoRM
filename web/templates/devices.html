@@ -207,18 +207,36 @@ function sortTable(columnIndex) {
     }
     currentSortColumn = columnIndex;
 
+    // Clear all arrows
     document.querySelectorAll('.sort-arrow').forEach(el => el.textContent = '');
+
+    // Set arrow on current column
     const header = table.tHead.rows[0].cells[columnIndex];
     const arrow = header.querySelector('.sort-arrow');
-    arrow.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+    if (arrow) {
+        arrow.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+    }
 
     rows.sort((a, b) => {
         let valA = a.cells[columnIndex].textContent.trim().toLowerCase();
         let valB = b.cells[columnIndex].textContent.trim().toLowerCase();
 
-        if (columnIndex === 7) { // Failures column
+        // Special handling for specific columns
+        if (columnIndex === 8) {
+            // Failures – numeric
             valA = parseInt(valA) || 0;
             valB = parseInt(valB) || 0;
+        }
+        else if (columnIndex === 6) {
+            // Status – logical order: down → pre-alarm → unknown → up
+            const statusOrder = { 'down': 0, 'pre-alarm': 1, 'unknown': 2, 'up': 3 };
+            valA = statusOrder[valA] !== undefined ? statusOrder[valA] : 99;
+            valB = statusOrder[valB] !== undefined ? statusOrder[valB] : 99;
+        }
+        else if (columnIndex === 7) {
+            // Monitored – Yes before No when ascending
+            valA = valA === 'yes' ? 0 : 1;
+            valB = valB === 'yes' ? 0 : 1;
         }
 
         if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;

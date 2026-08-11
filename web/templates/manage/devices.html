@@ -1,11 +1,9 @@
-{% extends "manage/base.html" %}
+{% extends "base.html" %}
 
-{% block manage_title %}Devices{% endblock %}
+{% block title %}Device Dashboard{% endblock %}
 
-{% block manage_content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Devices</h2>
-</div>
+{% block content %}
+<h1 class="mb-4">Device Dashboard</h1>
 
 <style>
     .table td.text-nowrap,
@@ -13,6 +11,7 @@
         white-space: nowrap;
     }
 
+    /* Prevent the comment column from growing too wide */
     .table td[title] {
         overflow: hidden;
         text-overflow: ellipsis;
@@ -20,170 +19,133 @@
     }
 </style>
 
-<!-- Search -->
-<div class="mb-3">
-    <input type="text" id="searchInput" class="form-control" placeholder="Search devices (IP, Name, Asset Tag, Building, Location)...">
-</div>
 
-<!-- Add / Edit Device Form -->
-<div class="card mb-4">
-    <div class="card-header">
-        <strong>{% if edit_device %}Edit Device{% else %}Add New Device{% endif %}</strong>
+<!-- Top Controls -->
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <!-- Search -->
+    <div class="input-group" style="width: 260px; max-width: 100%;">
+        <span class="input-group-text">🔍</span>
+        <input type="text" class="form-control" id="searchInput" placeholder="Search devices..." onkeyup="filterTable()">
     </div>
-    <div class="card-body">
-        <form method="post" action="/manage/devices">
-            <input type="hidden" name="device_id" value="{{ edit_device.id if edit_device else '' }}">
 
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <label class="form-label">IP Address *</label>
-                    <input type="text" name="ip_address" class="form-control" 
-                           value="{{ edit_device.ip_address if edit_device else '' }}" required>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Asset Tag (must be unique leave blank if no asset)</label>
-                    <input type="text" name="asset_tag" class="form-control" 
-                           value="{{ edit_device.asset_tag if edit_device else '' }}">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Name</label>
-                    <input type="text" name="name" class="form-control" 
-                           value="{{ edit_device.name if edit_device else '' }}">
-                </div>
+    <!-- Monitored Filter -->
+    <select class="form-select" id="monitoredFilter" onchange="filterTable()" style="width: 160px; max-width: 100%;">
+        <option value="all" selected>All Devices</option>
+        <option value="yes">Monitored Only</option>
+        <option value="no">Unmonitored Only</option>
+    </select>
 
-                <div class="col-md-4">
-                    <label class="form-label">Building *</label>
-                    <select name="building" class="form-select" required>
-                        <option value="">-- Select Building --</option>
-                        {% for b in buildings %}
-                        <option value="{{ b.name }}" 
-                            {% if edit_device and edit_device.building == b.name %}selected{% endif %}>
-                            {{ b.name }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Location</label>
-                    <input type="text" name="location" class="form-control" 
-                           value="{{ edit_device.location if edit_device else '' }}">
-                </div>
-		<div class="col-md-12">
-    		    <label class="form-label">Comment / Description</label>
-    		    <textarea name="comment" class="form-control" rows="2"
-              	    placeholder="Optional notes about this device">{{ edit_device.comment if edit_device else '' }}</textarea>
-                </div>
-                <div class="col-md-4 d-flex align-items-end">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" name="monitored" value="true"
-                            {% if not edit_device or edit_device.monitored %}checked{% endif %}>
-                        <label class="form-check-label">Monitored</label>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-3">
-                <button type="submit" class="btn btn-primary">
-                    {% if edit_device %}Update Device{% else %}Add Device{% endif %}
-                </button>
-                {% if edit_device %}
-                <a href="/manage/devices" class="btn btn-secondary">Cancel</a>
-                {% endif %}
-            </div>
-        </form>
+    <!-- Auto-refresh Toggle -->
+    <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+        <label class="form-check-label" for="autoRefreshToggle">
+            <span class="refresh-indicator" id="refresh-status">
+                Auto-refresh: <span class="text-success">ON</span> ({{ auto_refresh_seconds }}s)
+            </span>
+        </label>
     </div>
+
+    <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+        Refresh Now
+    </button>
 </div>
 
 <!-- Devices Table -->
 <div class="card">
     <div class="card-header">
-        <strong>Devices ({{ devices|length }})</strong>
+        <h5 class="mb-0">Monitored Devices</h5>
     </div>
     <div class="card-body p-0">
-        {% if devices %}
-        <table class="table table-hover mb-0" id="devicesTable">
-            <thead class="table-light">
-                <tr>
-		    <th onclick="sortTable(1)" style="cursor: pointer;">Asset Tag <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(0)" style="cursor: pointer;">IP <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(2)" style="cursor: pointer;" class="text-nowrap">Name <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(3)" style="cursor: pointer;" class="text-nowrap">Building <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(4)" style="cursor: pointer;">Location <span class="sort-arrow"></span></th>
-		    <th onclick="sortTable(7)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(5)" style="cursor: pointer;">Status <span class="sort-arrow"></span></th>
-                    <th onclick="sortTable(6)" style="cursor: pointer;">Monitored <span class="sort-arrow"></span></th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for device in devices %}
-                <tr
-		    data-asset-tag="{{ device.asset_tag or '' }}"
-    		    data-comment="{{ device.comment or '' }}"
-		    data-name="{{ device.name or '' }}"
-    		    data-building="{{ device.building or '' }}"
-    		    data-location="{{ device.location or '' }}"
-    		    data-ip="{{ device.ip_address }}">
-		    <td style="max-width: 140px;" title="{{ device.asset_tag or '' }}">
-    			{% if device.asset_tag %}
-        		    {{ device.asset_tag[:12] }}{% if device.asset_tag|length > 12 %}…{% endif %}
-    			{% else %}
-        		    -
-    			{% endif %}
-		    </td>
-                    <td>{{ device.ip_address }}</td>
-                    <td class="text-nowrap">{{ device.name or '-' }}</td>
-                    <td class="text-nowrap">{{ device.building or '-' }}</td>
-                    <td>{{ device.location or '-' }}</td>
-		    <td style="max-width: 180px;" title="{{ device.comment or '' }}">
-    			{% if device.comment %}
-        		    {{ device.comment[:20] }}{% if device.comment|length > 20 %}…{% endif %}
-    			{% else %}
-        		    -
-    			{% endif %}
-		    </td>
-                    <td>
-                        {% if device.status == 'up' %}
-                            <span class="badge bg-success">Up</span>
-                        {% elif device.status == 'down' %}
-                            <span class="badge bg-danger">Down</span>
-                        {% elif device.status == 'pre-alarm' %}
-                            <span class="badge bg-warning text-dark">Pre-Alarm</span>
-                        {% else %}
-                            <span class="badge bg-secondary">{{ device.status }}</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if device.monitored %}
-                            Yes
-                        {% else %}
-                            <span class="badge bg-secondary">No</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-end">
-                        <a href="/manage/devices?edit={{ device.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
-                        <a href="/manage/devices/{{ device.id }}/delete" 
-                           class="btn btn-sm btn-outline-danger"
-                           onclick="return confirm('Delete this device?');">
-                            Delete
-                        </a>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="p-3 text-muted">No devices found.</div>
-        {% endif %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="devicesTable">
+		    <thead class="table-light">
+    			<tr>
+        			<th class="sortable" onclick="sortTable(0)">Asset Tag <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(1)">IP <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(2)" style="cursor: pointer;" class="text-nowrap">Name <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(3)" style="cursor: pointer;" class="text-nowrap">Building <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(4)">Location <span class="sort-arrow"></span></th>
+				<th class="sortable" onclick="sortTable(5)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(6)">Status <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(7)">Monitored <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(8)">Failures <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(9)">Last Checked<span class="sort-arrow"></span></th>
+    			</tr>
+		</thead>
+                <tbody>
+                    {% for device in devices %}
+                    <tr data-monitored="{{ 'yes' if device.monitored else 'no' }}"
+			data-asset-tag="{{ device.asset_tag or '' }}"
+    			data-comment="{{ device.comment or '' }}"
+    			data-name="{{ device.name or '' }}"
+    			data-building="{{ device.building or '' }}"
+    			data-location="{{ device.location or '' }}"
+    			data-ip="{{ device.ip_address }}">    
+
+			<td style="max-width: 140px;" title="{{ device.asset_tag or '' }}">
+    			    {% if device.asset_tag %}
+        			{{ device.asset_tag[:12] }}{% if device.asset_tag|length > 12 %}…{% endif %}
+    			    {% else %}
+        			-
+    			    {% endif %}
+			</td>
+                        <td>{{ device.ip_address }}</td>
+			<td class="text-nowrap">{{ device.name or '-' }}</td>
+                        <td class="text-nowrap">{{ device.building or '-' }}</td>
+                        <td>{{ device.location or '-' }}</td>
+			<td style="max-width: 180px;" title="{{ device.comment or '' }}">
+			    {% if device.comment %}
+			        {{ device.comment[:20] }}{% if device.comment|length > 20 %}...{% endif %}
+			    {% else %}
+			        -
+			    {% endif %}
+			</td>
+                        <td>
+                            {% if device.status == 'up' %}
+                                <span class="badge bg-success">UP</span>
+                            {% elif device.status == 'pre-alarm' %}
+                                <span class="badge bg-warning text-dark">PRE-ALARM</span>
+                            {% elif device.status == 'down' %}
+                                <span class="badge bg-danger">DOWN</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ device.status }}</span>
+                            {% endif %}
+                        </td>
+			<td>
+       			    {% if device.monitored %}
+            			Yes
+        		    {% else %}
+            			<span class="badge bg-secondary">No</span>
+        		    {% endif %}
+    			</td>
+                        <td>{{ device.failure_count }}</td>
+			<td title="{% if device.last_checked %}{{ device.last_checked }}{% endif %}">
+    			    {% if device.last_checked %}
+        			{% if device.last_checked is string %}
+            			    {# Handle string format: "2026-08-10 21:09:25.123456" or similar #}
+            			    {{ device.last_checked.split(' ')[1][:8] if ' ' in device.last_checked else device.last_checked }}
+        			{% else %}
+            			    {{ device.last_checked.strftime('%H:%M:%S') }}
+        			{% endif %}
+    			    {% else %}
+        			Never
+    			    {% endif %}
+			</td>
+			</td>
+			</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
-
 <!-- Footer -->
 <div class="mt-4 pt-3 border-top">
     <div class="d-flex justify-content-between align-items-center">
         <div>
             <small class="text-muted">
-                INfoRM v{{ app_version }}
+                INfoRM v{{ app_version }} 
             </small>
         </div>
         <div>
@@ -191,26 +153,22 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
 
 <script>
-// Search functionality
-//document.getElementById('searchInput').addEventListener('keyup', function() {
-//    const searchValue = this.value.toLowerCase();
-//    const rows = document.querySelectorAll('#devicesTable tbody tr');
-//
-//    rows.forEach(row => {
-//        const text = row.textContent.toLowerCase();
-//        row.style.display = text.includes(searchValue) ? '' : 'none';
-//    });
-//});
 // Search + Monitored Filter
-// Search functionality (standardized)
-document.getElementById('searchInput').addEventListener('keyup', function() {
-    const searchValue = this.value.toLowerCase();
+function filterTable() {
+    const searchFilter = document.getElementById('searchInput').value.toLowerCase();
+    const monitoredFilter = document.getElementById('monitoredFilter') 
+        ? document.getElementById('monitoredFilter').value 
+        : 'all';
+
     const rows = document.querySelectorAll('#devicesTable tbody tr');
 
     rows.forEach(row => {
-        // Combine visible text + data attributes so truncated fields remain searchable
+        // Combine visible text + data attributes for full searchability
         const searchableText = (
             row.textContent + ' ' +
             (row.dataset.assetTag || '') + ' ' +
@@ -221,9 +179,17 @@ document.getElementById('searchInput').addEventListener('keyup', function() {
             (row.dataset.ip || '')
         ).toLowerCase();
 
-        row.style.display = searchableText.includes(searchValue) ? '' : 'none';
+        const rowMonitored = row.getAttribute('data-monitored') || '';
+
+        let searchMatch = searchableText.includes(searchFilter);
+
+        let monitoredMatch = true;
+        if (monitoredFilter === 'yes' && rowMonitored !== 'yes') monitoredMatch = false;
+        if (monitoredFilter === 'no' && rowMonitored !== 'no') monitoredMatch = false;
+
+        row.style.display = (searchMatch && monitoredMatch) ? '' : 'none';
     });
-});
+}
 
 // Column Sorting
 let currentSortColumn = -1;
@@ -247,16 +213,30 @@ function sortTable(columnIndex) {
     // Set arrow on current column
     const header = table.tHead.rows[0].cells[columnIndex];
     const arrow = header.querySelector('.sort-arrow');
-    arrow.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+    if (arrow) {
+        arrow.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+    }
 
     rows.sort((a, b) => {
         let valA = a.cells[columnIndex].textContent.trim().toLowerCase();
         let valB = b.cells[columnIndex].textContent.trim().toLowerCase();
 
-        // Special handling for Monitored column (Yes/No)
-        if (columnIndex === 6) {
-            valA = valA === 'yes' ? 1 : 0;
-            valB = valB === 'yes' ? 1 : 0;
+        // Special handling for specific columns
+        if (columnIndex === 8) {
+            // Failures – numeric
+            valA = parseInt(valA) || 0;
+            valB = parseInt(valB) || 0;
+        }
+        else if (columnIndex === 6) {
+            // Status – logical order: down → pre-alarm → unknown → up
+            const statusOrder = { 'down': 0, 'pre-alarm': 1, 'unknown': 2, 'up': 3 };
+            valA = statusOrder[valA] !== undefined ? statusOrder[valA] : 99;
+            valB = statusOrder[valB] !== undefined ? statusOrder[valB] : 99;
+        }
+        else if (columnIndex === 7) {
+            // Monitored – Yes before No when ascending
+            valA = valA === 'yes' ? 0 : 1;
+            valB = valB === 'yes' ? 0 : 1;
         }
 
         if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
@@ -266,5 +246,62 @@ function sortTable(columnIndex) {
 
     rows.forEach(row => tbody.appendChild(row));
 }
+
+// Auto-refresh logic
+let countdown = {{ auto_refresh_seconds | default(16) }};
+let countdownTimer = null;
+let autoRefreshEnabled = false;
+
+const toggle = document.getElementById('autoRefreshToggle');
+const statusEl = document.getElementById('refresh-status');
+
+function updateStatusText() {
+    if (!statusEl) return;
+    if (autoRefreshEnabled) {
+        statusEl.innerHTML = `Auto-refresh: <span class="text-success">ON</span> (${countdown}s)`;
+    } else {
+        statusEl.innerHTML = `Auto-refresh: <span class="text-danger">OFF</span>`;
+    }
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    countdown = {{ auto_refresh_seconds | default(16) }};
+    updateStatusText();
+    countdownTimer = setInterval(() => {
+        if (autoRefreshEnabled) {
+            countdown--;
+            updateStatusText();
+            if (countdown <= 0) location.reload();
+        }
+    }, 1000);
+}
+
+function stopAutoRefresh() {
+    if (countdownTimer) clearInterval(countdownTimer);
+}
+
+function toggleAutoRefresh() {
+    autoRefreshEnabled = toggle.checked;
+    if (autoRefreshEnabled) {
+        startAutoRefresh();
+    } else {
+        stopAutoRefresh();
+        updateStatusText();
+    }
+}
+
+if (toggle) {
+    toggle.addEventListener('change', toggleAutoRefresh);
+
+    // Initialize on page load
+    autoRefreshEnabled = toggle.checked;
+    if (autoRefreshEnabled) {
+        startAutoRefresh();
+    } else {
+        updateStatusText();   // ← This line ensures it shows OFF when unchecked
+    }
+}
+
 </script>
 {% endblock %}
