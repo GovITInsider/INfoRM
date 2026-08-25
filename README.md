@@ -9,8 +9,9 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - **Status & Response Time Dashboard** — Overview of Up / Pre-Alarm / Down devices plus Min / Avg / Max response times
 - **Web Management GUI** — Add, edit, and delete devices and buildings through a protected web interface
 - **Building Enforcement** — Devices must be assigned to existing buildings via dropdown
-- **Authentication** — Secure login for the management area
+- **Authentication** — Secure login for the management area, with 8-hour sessions that renew while you work
 - **Alarm History** — Track when devices go down and come back up
+- **Inventory export / import** — YAML backup of buildings and devices from the management UI or CLI
 - **CLI Tools** — Still available for scripting and advanced use cases
 - **Auto-Refresh** — Configurable refresh on the NOC and Devices pages
 
@@ -47,7 +48,7 @@ The script:
 - Checks for Python 3.12+ and installs OS packages (`python3-venv`, `iputils-ping`, `rsync`)
 - Creates a dedicated system user (`inform`)
 - Copies the application to `/opt/inform-ng`
-- Creates a Python 3.12 virtual environment and installs dependencies
+- Creates a Python virtual environment (3.12+) and installs dependencies
 - Creates `data/` and `logs/` directories
 - Copies example configuration files if they do not already exist
 - Generates a random `SECURITY__SECRET_KEY` in `.env` on first install
@@ -86,8 +87,14 @@ Log in to `/manage` with the admin credentials created above.
 
 INfoRM uses two configuration files:
 
-- `config/config.yaml` — General settings (monitoring intervals, auto-refresh, etc.)
+- `config/config.yaml` — General settings (monitoring intervals, auto-refresh, admin session length, etc.)
 - `.env` — Sensitive values (`SECURITY__SECRET_KEY` used for authentication)
+
+Useful `config.yaml` keys:
+
+- `monitoring.poll_interval_seconds` — how often devices are pinged
+- `web.noc_auto_refresh_seconds` / `web.auto_refresh_seconds` — public page refresh
+- `security.token_expires_minutes` — admin session lifetime (default `480` = 8 hours; renewed on each manage-page request)
 
 After running the installation script, both files are created from example templates. Review them before using the system in production.
 
@@ -128,6 +135,23 @@ Import on the same or another INfoRM host. Existing building names and device IP
 ```bash
 sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory --dry-run /tmp/inform-inventory.yaml
 sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory /tmp/inform-inventory.yaml
+```
+
+Example file shape:
+
+```yaml
+version: 1
+buildings:
+  - name: City Hall
+    description: ""
+devices:
+  - ip_address: 10.0.0.1
+    asset_tag: SW-001
+    name: Core Switch
+    building: City Hall
+    location: MDF
+    comment: ""
+    monitored: true
 ```
 
 Admin sessions last 8 hours by default (`security.token_expires_minutes` in `config/config.yaml`) and renew while you are using the management pages.
@@ -175,6 +199,9 @@ Confirm `systemd/inform-web.service` and `systemd/inform-monitor.service` exist 
 
 **Services start but `/manage` is unreachable**  
 Confirm `inform-web` is listening on port 8000 (`ss -lntp | grep 8000`) and that the host firewall allows TCP/8000.
+
+**Logged out of `/manage` after about 15 minutes**  
+You are on a build older than 1.1.3. Update and restart `inform-web`. Session length is `security.token_expires_minutes` (default 480).
 
 ## Project Structure
 
