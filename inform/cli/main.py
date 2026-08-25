@@ -547,7 +547,6 @@ def remove_building(
     finally:
         db.close()
 
-
 ## admin user section
 @app.command(name="create-admin")
 def create_admin(
