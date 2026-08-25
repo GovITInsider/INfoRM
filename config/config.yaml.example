@@ -19,4 +19,4 @@ web:
 
 security:
   secret_key: "CHANGE_ME_IN_.env"     # ← placeholder only
-  token_expires_minutes: 480
+  token_expires_minutes: 480   # admin session length in minutes (renewed while you work)

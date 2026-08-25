@@ -21,7 +21,8 @@
                     <a class="nav-link {% if request.url.path == '/manage/devices' %}active{% endif %}" href="/manage/devices">Devices</a>
                 </li>
             </ul>
-            <div class="d-flex">
+            <div class="d-flex gap-2">
+                <a href="/manage/export" class="btn btn-outline-light btn-sm">Export inventory</a>
                 <a href="/manage/logout" class="btn btn-outline-light btn-sm">Logout</a>
             </div>
         </div>

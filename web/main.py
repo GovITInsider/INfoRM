@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from collections import defaultdict
@@ -7,7 +7,16 @@ from collections import defaultdict
 from inform.core.database import SessionLocal
 from inform.core.models import Device, Building, AlarmEvent
 from inform.core.config import settings
-from inform.core.auth import manager, verify_password, load_user
+from inform.core.auth import (
+    manager,
+    verify_password,
+    load_user,
+    NotAuthenticatedException,
+    issue_session,
+    clear_session,
+    username_from_token,
+)
+from inform.core.inventory import build_inventory, dump_inventory_yaml
 from inform.version import __version__
 from inform.core.timeutils import to_local
 
@@ -22,6 +31,23 @@ ensure_db_permissions()
 app = FastAPI(title="INfoRM", version=__version__)
 
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
+
+
+@app.exception_handler(NotAuthenticatedException)
+async def not_authenticated_handler(request: Request, exc: NotAuthenticatedException):
+    return RedirectResponse(url="/manage/login", status_code=302)
+
+
+@app.middleware("http")
+async def sliding_admin_session(request: Request, call_next):
+    """Refresh the admin cookie on each manage request so activity keeps the session alive."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/manage") and path not in ("/manage/login", "/manage/logout"):
+        username = username_from_token(request.cookies.get("access_token"))
+        if username:
+            issue_session(response, username)
+    return response
 
 # ========================
 # Jinja2 Setup
@@ -275,16 +301,15 @@ async def login(request: Request, username: str = Form(...), password: str = For
         return HTMLResponse(content=html)
 
     # Login successful
-    access_token = manager.create_access_token(data={"sub": user.username})
     response = RedirectResponse(url="/manage", status_code=302)
-    manager.set_cookie(response, access_token)
+    issue_session(response, user.username)
     return response
 
 
 @app.get("/manage/logout")
 async def logout():
     response = RedirectResponse(url="/manage/login", status_code=302)
-    manager.set_cookie(response, "")
+    clear_session(response)
     return response
 
 
@@ -300,11 +325,33 @@ async def manage_dashboard(request: Request):
         return RedirectResponse(url="/manage/login", status_code=302)
 
     try:
-        user = manager.get_current_user(token)
+        user = await manager.get_current_user(token)
     except Exception:
         return RedirectResponse(url="/manage/login", status_code=302)
 
-    return templates.get_template("manage/dashboard.html").render(request=request, user=user)
+    return templates.get_template("manage/dashboard.html").render(
+        request=request,
+        user=user,
+        session_hours=max(1, int(settings.security.token_expires_minutes / 60)),
+    )
+
+# ========================
+# Inventory export
+# ========================
+
+@app.get("/manage/export")
+async def export_inventory(user=Depends(manager)):
+    db = SessionLocal()
+    try:
+        body = dump_inventory_yaml(build_inventory(db))
+        return Response(
+            content=body,
+            media_type="application/yaml",
+            headers={"Content-Disposition": 'attachment; filename="inform-inventory.yaml"'},
+        )
+    finally:
+        db.close()
+
 
 # ========================
 # Building Management

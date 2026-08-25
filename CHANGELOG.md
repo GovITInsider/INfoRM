@@ -1,3 +1,12 @@
+## [1.1.3] - 2026-08-25
+
+### Added
+- YAML inventory export/import for buildings and devices (`export-inventory` / `import-inventory`, plus **Export inventory** in the management UI)
+- Sliding admin sessions: each manage-page request renews the cookie
+
+### Fixed
+- Admin login expired after 15 minutes (fastapi-login default). `security.token_expires_minutes` (default 480 / 8 hours) is now applied to the JWT and cookie
+
 ## [1.1.2] - 2026-08-25
 
 ### Added

@@ -111,6 +111,26 @@ Common commands:
 - `list-devices`
 - `edit-device <ip>`
 - `search-devices <term>`
+- `export-inventory -o inventory.yaml`
+- `import-inventory inventory.yaml` (optional `--dry-run`)
+
+### Inventory backup / restore
+
+Export buildings and devices to a YAML file from the management UI (**Export inventory**) or the CLI:
+
+```bash
+cd /opt/inform-ng
+sudo -u inform ./venv/bin/python -m inform.cli.main export-inventory -o /tmp/inform-inventory.yaml
+```
+
+Import on the same or another INfoRM host. Existing building names and device IPs are skipped (same as `add-building` / `add-device`):
+
+```bash
+sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory --dry-run /tmp/inform-inventory.yaml
+sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory /tmp/inform-inventory.yaml
+```
+
+Admin sessions last 8 hours by default (`security.token_expires_minutes` in `config/config.yaml`) and renew while you are using the management pages.
 
 ### Managing the Services
 
@@ -179,4 +199,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.1.2
+Current version: 1.1.3

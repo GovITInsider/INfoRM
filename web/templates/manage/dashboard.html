@@ -9,11 +9,15 @@
             <div class="card-body">
                 <h4 class="card-title">Welcome to INfoRM Management</h4>
                 <p class="card-text">
-                    Use the navigation bar above to manage Buildings, Devices, and (soon) Credential Profiles.
+                    Use the navigation bar above to manage Buildings and Devices.
+                </p>
+                <p class="card-text">
+                    <a href="/manage/export" class="btn btn-outline-secondary btn-sm">Export inventory</a>
+                    <span class="text-muted small ms-2">YAML of buildings and devices for backup or CLI import.</span>
                 </p>
                 <hr>
                 <p class="text-muted small mb-0">
-                    This area is protected. Only authorized administrators can access these functions.
+                    This area is protected. Sessions last {{ session_hours }} hours and reset while you are working.
                 </p>
             </div>
         </div>
