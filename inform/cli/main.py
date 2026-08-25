@@ -314,7 +314,7 @@ def edit_device(ip: str = typer.Argument(..., help="IP address of the device to 
         new_name = typer.prompt("Name", default=device.name or "")
         new_building = typer.prompt("Building", default=device.building or "")
         new_location = typer.prompt("Location", default=device.location or "")
-        new_comment = typer.prompt("Comment / Description", default=devide.comment or "")
+        new_comment = typer.prompt("Comment / Description", default=device.comment or "")
         new_monitored = typer.confirm("Monitored?", default=device.monitored)
 
         # Check for duplicate asset tag (if changed)

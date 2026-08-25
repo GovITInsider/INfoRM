@@ -1,0 +1,17 @@
+[Unit]
+Description=INfoRM ICMP Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=inform
+Group=inform
+WorkingDirectory=/opt/inform-ng
+Environment=PATH=/opt/inform-ng/venv/bin
+EnvironmentFile=-/opt/inform-ng/.env
+ExecStart=/opt/inform-ng/venv/bin/python -m inform.core.monitor
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

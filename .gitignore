@@ -8,4 +8,4 @@ logs/
 .env
 *.bak
 *.log
-*/config/config.yaml
+config/config.yaml

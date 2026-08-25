@@ -52,6 +52,9 @@ def ensure_db_permissions():
 
 def init_db():
     """Initialize the database and set correct permissions."""
+    # Models must be imported so they register on Base.metadata.
+    from inform.core import models as _models  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
     ensure_db_permissions()
     print(f"Database initialized at: {DATA_DIR / 'inform.db'}")

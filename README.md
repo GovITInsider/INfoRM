@@ -16,8 +16,8 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 
 ## Tech Stack
 
-- Python 3.12
-- FastAPI + Uvicorn + Gunicorn
+- Python 3.12 (required; Ubuntu 24.04 LTS default)
+- FastAPI + Uvicorn
 - SQLAlchemy + SQLite
 - Jinja2 + Bootstrap 5
 - fastapi-login (authentication)
@@ -25,80 +25,80 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 
 ## Getting Started
 
+### Requirements
+
+- Ubuntu 24.04 LTS (recommended) or another Ubuntu LTS with **Python 3.12**
+- Root / sudo access
+- Outbound HTTPS for `apt` and PyPI during install
+
+Python 3.13 and 3.14 are not supported. On a host whose default `python3` is not 3.12, install 3.12 first (for example `python3.12` and `python3.12-venv`) so it is on `PATH`.
+
 ### Installation
 
-The recommended way to install INfoRM is by using the included installation script.
-
-#### 1. Clone the Repository
+The recommended way to install INfoRM is the included installation script. It can be run from any directory:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/INfoRM.git
+git clone https://github.com/GovITInsider/INfoRM.git
 cd INfoRM
-```
-
-#### 2. Run the Installation Script 
-
-```bash
 sudo bash scripts/install.sh
 ```
-This script automates the following tasks:
+
+The script:
+
+- Checks for Python 3.12 and installs OS packages (`python3-venv`, `iputils-ping`, `rsync`)
 - Creates a dedicated system user (`inform`)
 - Copies the application to `/opt/inform-ng`
-- Sets up a Python virtual environment and installs dependencies
+- Creates a Python 3.12 virtual environment and installs dependencies
 - Creates `data/` and `logs/` directories
-- Initializes the database
-- Copies example configuration files (`config.yaml` and `.env`)
-- Installs and starts the systemd services
+- Copies example configuration files if they do not already exist
+- Generates a random `SECURITY__SECRET_KEY` in `.env` on first install
+- Initializes the SQLite database (creates all tables)
+- Installs and starts the `inform-web` and `inform-monitor` systemd services
 
-#### 3. Configure INfoRM
+Re-running the script updates application files and recreates the virtual environment. Existing `config/config.yaml`, `.env`, and `data/` contents are preserved.
 
-After installation, edit the configuration files:
+### Configure INfoRM
+
+After installation, review the configuration files:
+
 ```bash
 sudo nano /opt/inform-ng/config/config.yaml
 sudo nano /opt/inform-ng/.env
 ```
 
-**Important:** Set a strong, unique value for SECURITY__SECRET_KEY in the `.env` file.
+A secret key is generated automatically. Replace it only if you need to set your own value for `SECURITY__SECRET_KEY`.
 
-
-#### 4. Create Admin User
+### Create Admin User
 
 ```bash
 cd /opt/inform-ng
 sudo -u inform ./venv/bin/python -m inform.cli.main create-admin
 ```
 
-#### 5. Access the Web Interface
-
-Open your browser and go to:
-```
-http://your-server-ip:8000/manage
-```
-Log in using the admin credentials you created in the previous step.
-
-## Access the Web Interface
+### Access the Web Interface
 
 - **NOC View:** http://your-server:8000/noc
 - **Devices Page:** http://your-server:8000/devices
 - **Management GUI:** http://your-server:8000/manage
 
+Log in to `/manage` with the admin credentials created above.
+
 ## Configuration
 
 INfoRM uses two configuration files:
-- config/config.yaml - General settings (monitoring intervals, auto-refresh, etc.)
-- .env - Sensitive values (secret key used for authentication)
 
-After running the installation script, both files are created from example templates. You should review and customize them before using the system in production.
+- `config/config.yaml` — General settings (monitoring intervals, auto-refresh, etc.)
+- `.env` — Sensitive values (`SECURITY__SECRET_KEY` used for authentication)
+
+After running the installation script, both files are created from example templates. Review them before using the system in production.
 
 ## Usage
 
 ### Management GUI (Recommended)
 
-The web interface at /manage is the easiest way to manage buildings and devices.
+The web interface at `/manage` is the easiest way to manage buildings and devices. Add buildings first; devices must be assigned to an existing building.
 
 ### CLI Tools
-
-You can also manage INfoRM using the command-line interface:
 
 ```bash
 cd /opt/inform-ng
@@ -106,13 +106,15 @@ sudo -u inform ./venv/bin/python -m inform.cli.main --help
 ```
 
 Common commands:
-- create-admin
-- add-device
-- list-devices
-- edit-device <ip>
-- search-devices <term>
+
+- `create-admin`
+- `add-device`
+- `list-devices`
+- `edit-device <ip>`
+- `search-devices <term>`
 
 ### Managing the Services
+
 ```bash
 # Check status
 sudo systemctl status inform-web
@@ -126,6 +128,34 @@ sudo systemctl restart inform-monitor
 sudo journalctl -u inform-web -f
 sudo journalctl -u inform-monitor -f
 ```
+
+## Troubleshooting
+
+**`INfoRM requires Python 3.12`**  
+The installer found a different Python (commonly 3.10, 3.13, or 3.14). Install Python 3.12 so `python3.12` is on `PATH`, then re-run `sudo bash scripts/install.sh`.
+
+**`python3 -m venv` / `ensurepip` fails**  
+Install the venv package for 3.12: `sudo apt-get install python3.12-venv python3-venv`.
+
+**`no such table: users` when creating an admin**  
+The database was created without models registered. Re-run the installer (1.1.2 or later) or:
+
+```bash
+cd /opt/inform-ng
+sudo -u inform ./venv/bin/python -c 'from inform.core.database import init_db; init_db()'
+```
+
+**`Form data requires "python-multipart"`**  
+The virtualenv was built from an old `requirements.txt`. Re-run the installer, or `sudo -u inform /opt/inform-ng/venv/bin/pip install -r /opt/inform-ng/requirements.txt` and restart `inform-web`.
+
+**`AttributeError: module 'bcrypt' has no attribute '__about__'` (or passlib/bcrypt errors)**  
+passlib 1.7.4 needs bcrypt 4.0.x. Use Python 3.12 and the pinned `requirements.txt` (`bcrypt>=4.0.1,<4.1.0`). Recreate the venv by re-running the installer.
+
+**`Failed to start inform-web.service` / missing unit files**  
+Confirm `systemd/inform-web.service` and `systemd/inform-monitor.service` exist in the cloned repo, then re-run the installer. Check `journalctl -u inform-web -e`.
+
+**Services start but `/manage` is unreachable**  
+Confirm `inform-web` is listening on port 8000 (`ss -lntp | grep 8000`) and that the host firewall allows TCP/8000.
 
 ## Project Structure
 
@@ -150,4 +180,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.1.1
+Current version: 1.1.2

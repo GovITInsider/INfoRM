@@ -1,0 +1,17 @@
+[Unit]
+Description=INfoRM Web Interface
+After=network.target
+
+[Service]
+Type=simple
+User=inform
+Group=inform
+WorkingDirectory=/opt/inform-ng
+Environment=PATH=/opt/inform-ng/venv/bin
+EnvironmentFile=-/opt/inform-ng/.env
+ExecStart=/opt/inform-ng/venv/bin/uvicorn web.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
