@@ -30,6 +30,7 @@
             <li><a href="#alarm-history">Alarm History</a></li>
             <li><a href="#auto-refresh">Auto-Refresh Behavior</a></li>
             <li><a href="#management-gui">Management GUI</a></li>
+            <li><a href="#inventory">Inventory Export and Import</a></li>
             <li><a href="#cli">Using the CLI</a></li>
         </ul>
     </div>
@@ -78,17 +79,23 @@
 
         <h5>Column Explanations</h5>
         <ul>
-            <li><strong>Asset Tag</strong> — Optional unique identifier for the device.</li>
+            <li><strong>Asset Tag</strong> — Optional unique identifier for the device. Long tags are shortened in the table; hover to see the full value.</li>
             <li><strong>IP Address</strong> — The IP address being monitored.</li>
             <li><strong>Name</strong> — Friendly name of the device (optional).</li>
             <li><strong>Building</strong> — Building or site where the device is located.</li>
             <li><strong>Location</strong> — More specific location (e.g. "MDF", "Closet 3").</li>
-	    <li><strong>Comments</strong> — Comments/Description.</li>
+            <li><strong>Comments</strong> — Comments/Description. Long comments are shortened; hover to see the full value.</li>
             <li><strong>Status</strong> — Current reachability status (Up, Pre-Alarm, Down, or Unknown).</li>
             <li><strong>Monitored</strong> — Whether the device is actively being pinged.</li>
             <li><strong>Failures</strong> — Number of consecutive failed pings.</li>
             <li><strong>Last Checked</strong> — Timestamp of the last ping attempt.</li>
         </ul>
+
+        <h5>Search</h5>
+        <p>
+            The search box matches across Asset Tag, IP, Name, Building, Location, and Comments.
+            Text that is truncated in the table is still fully searchable.
+        </p>
     </div>
 
     <!-- NOC View -->
@@ -151,7 +158,16 @@
         <ul>
             <li><strong>Buildings</strong> — Add, edit, and delete buildings. This helps maintain consistency across the system.</li>
             <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed).</li>
+            <li><strong>Export inventory</strong> — Download a YAML backup of all buildings and devices (see <a href="#inventory">Inventory Export and Import</a>).</li>
         </ul>
+
+        <h5>Sessions</h5>
+        <p>
+            After you log in, your session lasts <strong>8 hours</strong> by default
+            (<code>security.token_expires_minutes</code> in <code>config/config.yaml</code>).
+            Using any management page renews the session, so you stay signed in while you work.
+            You are only logged out after that period of inactivity, or if you click Logout.
+        </p>
 
         <h5>Notes</h5>
         <ul>
@@ -159,6 +175,51 @@
             <li>Changes made in the Management GUI are picked up automatically by the monitoring system.</li>
             <li>The CLI is still available for scripting or advanced use cases, but the web interface is recommended for most day-to-day management.</li>
         </ul>
+    </div>
+
+    <!-- Inventory -->
+    <div id="inventory" class="mb-5">
+        <h2>Inventory Export and Import</h2>
+        <p>
+            You can back up buildings and devices to a YAML file, then restore them on the same host or another INfoRM instance.
+            The file does not include admin users, alarm history, or monitoring state.
+        </p>
+
+        <h5>Export from the Management GUI</h5>
+        <ul>
+            <li>Log in to <strong>Admin</strong>.</li>
+            <li>Click <strong>Export inventory</strong> in the management navigation bar (or on the dashboard).</li>
+            <li>Your browser downloads <code>inform-inventory.yaml</code>.</li>
+        </ul>
+
+        <h5>Export and import from the CLI</h5>
+        <p>Run commands as the <code>inform</code> user from <code>/opt/inform-ng</code>:</p>
+        <pre><code>sudo -u inform ./venv/bin/python -m inform.cli.main export-inventory -o /tmp/inform-inventory.yaml
+sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory --dry-run /tmp/inform-inventory.yaml
+sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory /tmp/inform-inventory.yaml</code></pre>
+        <ul>
+            <li><code>export-inventory -o &lt;file&gt;</code> — write YAML to a file (omit <code>-o</code> to print to the terminal).</li>
+            <li><code>import-inventory --dry-run &lt;file&gt;</code> — show how many buildings and devices would be added, without writing.</li>
+            <li><code>import-inventory &lt;file&gt;</code> — add new buildings and devices.</li>
+        </ul>
+        <p>
+            Import skips building names and device IP addresses that already exist (same as adding them one at a time).
+            There is no inventory import in the web UI; use the CLI to restore a file.
+        </p>
+
+        <h5>YAML file shape</h5>
+        <pre><code>version: 1
+buildings:
+  - name: City Hall
+    description: ""
+devices:
+  - ip_address: 10.0.0.1
+    asset_tag: SW-001
+    name: Core Switch
+    building: City Hall
+    location: MDF
+    comment: ""
+    monitored: true</code></pre>
     </div>
 
     <!-- CLI -->
@@ -176,7 +237,12 @@
             <li><code>list-devices</code> — View all devices.</li>
             <li><code>edit-device &lt;ip&gt;</code> — Edit an existing device.</li>
             <li><code>search-devices &lt;term&gt;</code> — Search across multiple fields.</li>
+            <li><code>export-inventory -o inventory.yaml</code> — Write buildings and devices to a YAML file.</li>
+            <li><code>import-inventory inventory.yaml</code> — Load buildings and devices from a YAML file (optional <code>--dry-run</code>).</li>
         </ul>
+        <p>
+            See <a href="#inventory">Inventory Export and Import</a> for backup and restore examples.
+        </p>
     </div>
 
 </div>
