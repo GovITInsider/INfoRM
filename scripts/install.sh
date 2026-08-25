@@ -7,7 +7,7 @@ echo ""
 INSTALL_DIR="/opt/inform-ng"
 SERVICE_USER="inform"
 REQUIRED_PY_MAJOR=3
-REQUIRED_PY_MINOR=12
+REQUIRED_PY_MINOR_MIN=12
 
 if [ "${EUID}" -ne 0 ]; then
     echo "This script must be run with sudo."
@@ -56,17 +56,17 @@ PY_VERSION="$("${PYTHON_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{
 PY_MAJOR="${PY_VERSION%%.*}"
 PY_MINOR="${PY_VERSION#*.}"
 
-if [ "${PY_MAJOR}" -ne "${REQUIRED_PY_MAJOR}" ] || [ "${PY_MINOR}" -ne "${REQUIRED_PY_MINOR}" ]; then
-    echo "INfoRM requires Python ${REQUIRED_PY_MAJOR}.${REQUIRED_PY_MINOR} (Ubuntu 24.04 LTS)."
+if [ "${PY_MAJOR}" -lt "${REQUIRED_PY_MAJOR}" ] || { [ "${PY_MAJOR}" -eq "${REQUIRED_PY_MAJOR}" ] && [ "${PY_MINOR}" -lt "${REQUIRED_PY_MINOR_MIN}" ]; }; then
+    echo "INfoRM requires Python ${REQUIRED_PY_MAJOR}.${REQUIRED_PY_MINOR_MIN} or newer."
     echo "Found: Python ${PY_VERSION} (${PYTHON_BIN})"
     echo ""
-    echo "Install Python 3.12 and re-run this script. On Ubuntu 24.04:"
+    echo "On Ubuntu 24.04 LTS:"
     echo "  sudo apt-get install python3.12 python3.12-venv"
-    echo "On other releases, install Python 3.12 (for example via the deadsnakes PPA) and ensure python3.12 is on PATH."
+    echo "On Ubuntu 26.04 LTS, the default python3 (3.14) is supported."
     exit 1
 fi
 
-echo "Using ${PYTHON_BIN} (${PY_VERSION})"
+echo "Using ${PYTHON_BIN} (Python ${PY_VERSION})"
 
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
     echo "Creating system user: ${SERVICE_USER}"

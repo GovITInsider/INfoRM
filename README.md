@@ -16,7 +16,7 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 
 ## Tech Stack
 
-- Python 3.12 (required; Ubuntu 24.04 LTS default)
+- Python 3.12+ (3.12 on Ubuntu 24.04 LTS; 3.14 on Ubuntu 26.04 LTS)
 - FastAPI + Uvicorn
 - SQLAlchemy + SQLite
 - Jinja2 + Bootstrap 5
@@ -27,11 +27,10 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 
 ### Requirements
 
-- Ubuntu 24.04 LTS (recommended) or another Ubuntu LTS with **Python 3.12**
+- Ubuntu 24.04 LTS or Ubuntu 26.04 LTS
+- Python 3.12 or newer (the installer prefers `python3.12` when present, otherwise `python3`)
 - Root / sudo access
 - Outbound HTTPS for `apt` and PyPI during install
-
-Python 3.13 and 3.14 are not supported. On a host whose default `python3` is not 3.12, install 3.12 first (for example `python3.12` and `python3.12-venv`) so it is on `PATH`.
 
 ### Installation
 
@@ -45,7 +44,7 @@ sudo bash scripts/install.sh
 
 The script:
 
-- Checks for Python 3.12 and installs OS packages (`python3-venv`, `iputils-ping`, `rsync`)
+- Checks for Python 3.12+ and installs OS packages (`python3-venv`, `iputils-ping`, `rsync`)
 - Creates a dedicated system user (`inform`)
 - Copies the application to `/opt/inform-ng`
 - Creates a Python 3.12 virtual environment and installs dependencies
@@ -131,8 +130,8 @@ sudo journalctl -u inform-monitor -f
 
 ## Troubleshooting
 
-**`INfoRM requires Python 3.12`**  
-The installer found a different Python (commonly 3.10, 3.13, or 3.14). Install Python 3.12 so `python3.12` is on `PATH`, then re-run `sudo bash scripts/install.sh`.
+**`INfoRM requires Python 3.12 or newer`**  
+The installer found Python older than 3.12 (commonly 3.10 on Ubuntu 22.04). Use Ubuntu 24.04+ or install Python 3.12+.
 
 **`python3 -m venv` / `ensurepip` fails**  
 Install the venv package for 3.12: `sudo apt-get install python3.12-venv python3-venv`.
@@ -149,7 +148,7 @@ sudo -u inform ./venv/bin/python -c 'from inform.core.database import init_db; i
 The virtualenv was built from an old `requirements.txt`. Re-run the installer, or `sudo -u inform /opt/inform-ng/venv/bin/pip install -r /opt/inform-ng/requirements.txt` and restart `inform-web`.
 
 **`AttributeError: module 'bcrypt' has no attribute '__about__'` (or passlib/bcrypt errors)**  
-passlib 1.7.4 needs bcrypt 4.0.x. Use Python 3.12 and the pinned `requirements.txt` (`bcrypt>=4.0.1,<4.1.0`). Recreate the venv by re-running the installer.
+passlib 1.7.4 needs bcrypt 4.0.x. Use the pinned `requirements.txt` (`bcrypt>=4.0.1,<4.1.0`) and recreate the venv by re-running the installer.
 
 **`Failed to start inform-web.service` / missing unit files**  
 Confirm `systemd/inform-web.service` and `systemd/inform-monitor.service` exist in the cloned repo, then re-run the installer. Check `journalctl -u inform-web -e`.

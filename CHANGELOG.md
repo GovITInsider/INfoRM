@@ -2,7 +2,7 @@
 
 ### Added
 - systemd unit files for `inform-web` and `inform-monitor`
-- Python 3.12 version check and OS package install in `scripts/install.sh`
+- Python 3.12+ version check and OS package install in `scripts/install.sh` (Ubuntu 24.04 / 26.04)
 - Install troubleshooting notes in the README
 
 ### Fixed
