@@ -1444,6 +1444,16 @@ async def save_discover(
             )
             return HTMLResponse(content=html)
 
+        if session.status in ("running", "cancelling"):
+            html = _render_discover_page(
+                request,
+                db,
+                error="Wait for the scan to finish before saving.",
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
         if db.query(Building.id).first() is None:
             html = _render_discover_page(
                 request,
