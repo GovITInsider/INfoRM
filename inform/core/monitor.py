@@ -7,10 +7,9 @@ from datetime import datetime
 from icmplib import ping
 from sqlalchemy.orm import Session
 
-from inform.core.database import SessionLocal
+from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
 from inform.core.models import Device, AlarmEvent
 from inform.core.config import settings
-from inform.core.database import ensure_db_permissions
 
 # Ensure database has correct permissions on startup
 ensure_db_permissions()
@@ -76,8 +75,7 @@ def ping_device(ip: str, timeout: float = 2.0) -> tuple[bool, float | None]:
         logger.error(f"Unexpected error pinging {ip}: {e}")
         return False, None
 
-def log_alarm_event(device: Device, event_type: str):
-    db: Session = SessionLocal()
+def log_alarm_event(db: Session, device: Device, event_type: str):
     try:
         event = AlarmEvent(
             device_id=device.id,
@@ -89,21 +87,20 @@ def log_alarm_event(device: Device, event_type: str):
             location=device.location,
         )
         db.add(event)
-        db.commit()
         logger.info(f"{event_type} logged for {device.ip_address}")
     except Exception as e:
-        db.rollback()
         logger.error(f"Failed to log {event_type} for {device.ip_address}: {e}")
-    finally:
-        db.close()
+        raise
 
 
-def process_device(device: Device, is_up: bool, response_time: float | None):
+def process_device(device_id: int, is_up: bool, response_time: float | None):
     db: Session = SessionLocal()
+    label = f"id={device_id}"
     try:
-        db_device = db.query(Device).filter(Device.id == device.id).first()
+        db_device = db.query(Device).filter(Device.id == device_id).first()
         if not db_device:
             return
+        label = db_device.ip_address
 
         previous_status = db_device.status
         threshold = settings.monitoring.countbeforealarm
@@ -114,7 +111,7 @@ def process_device(device: Device, is_up: bool, response_time: float | None):
             db_device.response_time = response_time
 
             if previous_status == "down" and db_device.monitored:
-                log_alarm_event(db_device, "CLEARED")
+                log_alarm_event(db, db_device, "CLEARED")
         else:
             db_device.failure_count += 1
             db_device.response_time = None
@@ -125,7 +122,7 @@ def process_device(device: Device, is_up: bool, response_time: float | None):
                 new_status = "pre-alarm"
 
             if new_status == "down" and previous_status != "down" and db_device.monitored:
-                log_alarm_event(db_device, "ALARM")
+                log_alarm_event(db, db_device, "ALARM")
 
             db_device.status = new_status
 
@@ -135,7 +132,7 @@ def process_device(device: Device, is_up: bool, response_time: float | None):
 
     except Exception as e:
         db.rollback()
-        logger.error(f"Error processing {device.ip_address}: {e}")
+        logger.error(f"Error processing {label}: {e}")
     finally:
         db.close()
 
@@ -144,25 +141,28 @@ def run_monitoring_cycle():
     try:
         devices = db.query(Device).all()
         logger.info(f"Monitoring {len(devices)} devices...")
-
-        for device in devices:
-            if shutdown_requested:
-                break
-
-            try:
-                is_up, rtt = ping_device(device.ip_address)
-                #logger.info(f"{device.ip_address} → is_up={is_up}, rtt={rtt}")   # ← TEMP DEBUG LINE
-                process_device(device, is_up, rtt)
-            except Exception as e:
-                logger.error(f"Error pinging {device.ip_address}: {e}")
-
+        pending = [(device.id, device.ip_address) for device in devices]
     except Exception as e:
         logger.error(f"Error in monitoring cycle: {e}")
+        return
     finally:
         db.close()
 
+    # Session must not stay open across ping: BEGIN IMMEDIATE holds a reserved
+    # lock, and a nested SessionLocal() cannot start another IMMEDIATE txn.
+    for device_id, ip_address in pending:
+        if shutdown_requested:
+            break
+
+        try:
+            is_up, rtt = ping_device(ip_address)
+            process_device(device_id, is_up, rtt)
+        except Exception as e:
+            logger.error(f"Error pinging {ip_address}: {e}")
+
 def main():
     logger.info("INfoRM Monitor started")
+    ensure_schema()
 
     while not shutdown_requested:
         try:

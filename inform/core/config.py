@@ -20,6 +20,14 @@ class GeneralSettings(BaseModel):
 
 class DiscoverySettings(BaseModel):
     enabled: bool = True
+    max_prefix_len: int = 24
+    default_ping_timeout_seconds: int = 1
+    default_ping_concurrency: int = 32
+    default_snmp_timeout_seconds: int = 2
+    default_snmp_concurrency: int = 8
+    max_ping_concurrency: int = 64
+    max_snmp_concurrency: int = 16
+    scan_max_runtime_seconds: int = 900
 
 class LoggingSettings(BaseModel):
     log_file: str = "logs/inform.log"

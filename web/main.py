@@ -1,10 +1,11 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from collections import defaultdict
 
-from inform.core.database import SessionLocal
+from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
 from inform.core.models import Device, Building, AlarmEvent
 from inform.core.config import settings
 from inform.core.auth import (
@@ -20,7 +21,6 @@ from inform.core.inventory import build_inventory, dump_inventory_yaml
 from inform.version import __version__
 from inform.core.timeutils import to_local
 
-from inform.core.database import ensure_db_permissions
 from starlette.responses import RedirectResponse
 from sqlalchemy import text
 
@@ -28,7 +28,14 @@ from sqlalchemy import text
 # Ensure database permissions on startup
 ensure_db_permissions()
 
-app = FastAPI(title="INfoRM", version=__version__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ensure_schema()
+    yield
+
+
+app = FastAPI(title="INfoRM", version=__version__, lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
