@@ -1,3 +1,25 @@
+## [1.2.0] - 2026-08-26
+
+### Added
+- On-demand **Manage → Discover**: scan one IPv4 or CIDR (max `/24`), ping then SNMP, review grid, bulk-add selected hosts
+- **Manage → Profiles** for SNMPv1 / v2c / v3 credentials (create / edit / test / delete); CLI `add-profile` / `list-profiles` / `snmp-test` / `discover`
+- Per-device **Refresh from SNMP** on the management Devices page (location, vendor, model; name only if asked)
+- SNMP vendor and model on the management device table and edit form (read-only)
+- Inventory YAML **version 2**: export/import `vendor`, `model`, and `credential_profile` (profile name, never secrets)
+- AES-256-GCM encryption of community / auth / priv secrets at rest (key derived from `SECURITY__SECRET_KEY`)
+
+### Changed
+- SNMP identity uses pysnmp 7.1 asyncio instead of subprocess `snmpget`
+- SQLite uses WAL, `BEGIN IMMEDIATE`, and database file mode `0640`
+- Inventory import still skips existing IPs; unknown profile names add the device with the profile unset (`Profiles unresolved: N`)
+
+### Notes
+- Up / Pre-Alarm / Down remain ICMP. SNMP is identity only.
+- `sys_object_id` is omitted from inventory YAML (internal refresh cache)
+- `discovery.enabled: false` hides Discover and rejects CLI `discover`; Profiles and Refresh stay available
+- `inform-web` must stay a single uvicorn worker (no `--workers`)
+- Rotating `SECURITY__SECRET_KEY` invalidates sessions and encrypted profile secrets
+
 ## [1.1.3] - 2026-08-25
 
 ### Added

@@ -30,6 +30,8 @@
             <li><a href="#alarm-history">Alarm History</a></li>
             <li><a href="#auto-refresh">Auto-Refresh Behavior</a></li>
             <li><a href="#management-gui">Management GUI</a></li>
+            <li><a href="#discover">Discover</a></li>
+            <li><a href="#profiles">Credential Profiles</a></li>
             <li><a href="#inventory">Inventory Export and Import</a></li>
             <li><a href="#cli">Using the CLI</a></li>
         </ul>
@@ -157,7 +159,9 @@
         <h5>What You Can Do</h5>
         <ul>
             <li><strong>Buildings</strong> — Add, edit, and delete buildings. This helps maintain consistency across the system.</li>
-            <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed).</li>
+            <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed). Vendor and model are read-only (filled by Discover or Refresh from SNMP).</li>
+            <li><strong>Discover</strong> — Scan an IPv4 address or subnet and bulk-add live hosts (see <a href="#discover">Discover</a>). Hidden when <code>discovery.enabled</code> is false.</li>
+            <li><strong>Profiles</strong> — SNMPv1 / v2c / v3 credentials used for identity lookup, not for health checks (see <a href="#profiles">Credential Profiles</a>).</li>
             <li><strong>Export inventory</strong> — Download a YAML backup of all buildings and devices (see <a href="#inventory">Inventory Export and Import</a>).</li>
         </ul>
 
@@ -177,12 +181,62 @@
         </ul>
     </div>
 
+    <!-- Discover -->
+    <div id="discover" class="mb-5">
+        <h2>Discover</h2>
+        <p>
+            <strong>Manage → Discover</strong> scans one IPv4 address or CIDR (maximum <code>/24</code>) so you can review live hosts and add selected ones to Devices.
+            Up / Pre-Alarm / Down still come from ICMP pings. SNMP is used only to prefill name, location, vendor, and model.
+        </p>
+        <ul>
+            <li>Ping runs first; SNMP runs only on live unmanaged hosts.</li>
+            <li>Already-managed IPs appear as <strong>Already in inventory</strong> (even if ping fails) and are never overwritten.</li>
+            <li>Unmanaged hosts that do not answer ping are omitted.</li>
+            <li>Credential profiles are optional and tried in the order you set (Up/Down). Zero selected means ping-only.</li>
+            <li>Default building is a starting value per row. Each selected row must have a building before Save.</li>
+            <li>Public (non-RFC1918) targets require the <strong>scan public space</strong> checkbox.</li>
+            <li>Save selected writes to Devices. Reloading the Discover page resets the grid to scan results.</li>
+        </ul>
+        <p>
+            Set <code>discovery.enabled: false</code> in <code>config/config.yaml</code> to hide Discover and disable CLI <code>discover</code>
+            (for example if a scan is mistaken for an attack). Profiles and Refresh from SNMP stay available.
+        </p>
+        <h5>Scan caps</h5>
+        <ul>
+            <li>Largest network: <code>/24</code> (254 hosts). Larger prefixes are rejected.</li>
+            <li>Ping timeout default 1 s (max 3 s); ping concurrency default 32 (max 64).</li>
+            <li>SNMP timeout default 2 s (max 5 s); SNMP concurrency default 8 (max 16).</li>
+            <li>A stuck scan is failed by a watchdog (default 900 seconds).</li>
+        </ul>
+        <p>
+            <strong>Refresh from SNMP</strong> is on the device edit page, not on the Discover grid.
+            It overwrites location, vendor, and model. Name updates only if you check
+            <strong>Also update name from sysName</strong>. Comment, building, asset tag, and monitored are never changed.
+        </p>
+    </div>
+
+    <!-- Profiles -->
+    <div id="profiles" class="mb-5">
+        <h2>Credential Profiles</h2>
+        <p>
+            <strong>Manage → Profiles</strong> stores SNMPv1, v2c, and v3 credentials used by Discover, Refresh from SNMP, and CLI <code>snmp-test</code>.
+            They are not used to decide Up or Down.
+        </p>
+        <ul>
+            <li>Username is shown in the list. Community is shown as <strong>set</strong> or <strong>not set</strong> only — never the secret itself.</li>
+            <li>Auth and privacy keys are password fields. On edit, leave them blank to keep the stored value.</li>
+            <li>Secrets are encrypted at rest using a key derived from <code>SECURITY__SECRET_KEY</code>. Changing that key breaks decryption until you re-enter each profile.</li>
+            <li>Test probes a single IP and shows name, location, vendor, and model (or timeout / auth fail). It never echoes secrets.</li>
+            <li>Deleting a profile unlinks it from devices; devices themselves are not deleted.</li>
+        </ul>
+    </div>
+
     <!-- Inventory -->
     <div id="inventory" class="mb-5">
         <h2>Inventory Export and Import</h2>
         <p>
             You can back up buildings and devices to a YAML file, then restore them on the same host or another INfoRM instance.
-            The file does not include admin users, alarm history, or monitoring state.
+            The file does not include admin users, alarm history, monitoring state, or credential secrets.
         </p>
 
         <h5>Export from the Management GUI</h5>
@@ -204,11 +258,19 @@ sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory /tmp/inform
         </ul>
         <p>
             Import skips building names and device IP addresses that already exist (same as adding them one at a time).
+            Skipped devices keep their current vendor, model, and profile.
+            Version 1 files still import (missing vendor/model/profile become empty).
+            An unknown <code>credential_profile</code> name still adds the device with the profile unset; the CLI reports
+            <code>Profiles unresolved: N</code>.
             There is no inventory import in the web UI; use the CLI to restore a file.
+        </p>
+        <p>
+            <code>sys_object_id</code> is omitted from the YAML file (it is an internal cache for Refresh).
+            After import, vendor and model display from the file; run Refresh from SNMP later if you need <code>sys_object_id</code> filled in.
         </p>
 
         <h5>YAML file shape</h5>
-        <pre><code>version: 1
+        <pre><code>version: 2
 buildings:
   - name: City Hall
     description: ""
@@ -219,7 +281,10 @@ devices:
     building: City Hall
     location: MDF
     comment: ""
-    monitored: true</code></pre>
+    monitored: true
+    vendor: Cisco
+    model: C9300-48P
+    credential_profile: campus-v3</code></pre>
     </div>
 
     <!-- CLI -->
@@ -237,6 +302,8 @@ devices:
             <li><code>list-devices</code> — View all devices.</li>
             <li><code>edit-device &lt;ip&gt;</code> — Edit an existing device.</li>
             <li><code>search-devices &lt;term&gt;</code> — Search across multiple fields.</li>
+            <li><code>add-profile</code> / <code>list-profiles</code> / <code>snmp-test</code> — Manage SNMP credentials and probe one host.</li>
+            <li><code>discover &lt;ip-or-cidr&gt;</code> — Ping then SNMP probe (optional <code>--profile</code>, <code>--confirm-public</code>). Does not write devices.</li>
             <li><code>export-inventory -o inventory.yaml</code> — Write buildings and devices to a YAML file.</li>
             <li><code>import-inventory inventory.yaml</code> — Load buildings and devices from a YAML file (optional <code>--dry-run</code>).</li>
         </ul>
