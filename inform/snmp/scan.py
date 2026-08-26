@@ -30,6 +30,8 @@ _current_session_id: int | None = None
 
 _MAX_PING_TIMEOUT = 3
 _MAX_SNMP_TIMEOUT = 5
+_MAX_PING_CONCURRENCY = 64
+_MAX_SNMP_CONCURRENCY = 16
 _WATCHDOG_CAP_SECONDS = 20 * 60
 _WRITER_BATCH = 8
 _ACTIVE = ("running", "cancelling")
@@ -77,13 +79,19 @@ def clamp_scan_options(
         ping_timeout_seconds, d.default_ping_timeout_seconds, 1, _MAX_PING_TIMEOUT
     )
     ping_conc = _clamp(
-        ping_concurrency, d.default_ping_concurrency, 1, d.max_ping_concurrency
+        ping_concurrency,
+        d.default_ping_concurrency,
+        1,
+        min(int(d.max_ping_concurrency), _MAX_PING_CONCURRENCY),
     )
     snmp_timeout = _clamp(
         snmp_timeout_seconds, d.default_snmp_timeout_seconds, 1, _MAX_SNMP_TIMEOUT
     )
     snmp_conc = _clamp(
-        snmp_concurrency, d.default_snmp_concurrency, 1, d.max_snmp_concurrency
+        snmp_concurrency,
+        d.default_snmp_concurrency,
+        1,
+        min(int(d.max_snmp_concurrency), _MAX_SNMP_CONCURRENCY),
     )
     return ping_timeout, ping_conc, snmp_timeout, snmp_conc
 
@@ -235,10 +243,13 @@ def _on_scan_done(task: asyncio.Task, session_id: int) -> None:
                 _mark_session_failed_if_unfinished(
                     session_id, f"scan task crashed: {type(exc).__name__}"
                 )
+        # If run_scan's finally did not run, flags still map a terminal status.
+        _finalize_session(session_id)
     except asyncio.CancelledError:
-        pass
+        _finalize_session(session_id)
     except Exception:
         logger.debug("scan done callback failed", exc_info=True)
+        _finalize_session(session_id)
     if _current_task is task:
         _current_task = None
         if _current_session_id == session_id:
@@ -353,7 +364,9 @@ async def cancel_current_scan() -> None:
             logger.debug("shutdown cancel flag write failed", exc_info=True)
         finally:
             db.close()
-    task.cancel()
+    cancelling = getattr(task, "cancelling", None)
+    if cancelling is None or cancelling() == 0:
+        task.cancel()
     try:
         await task
     except asyncio.CancelledError:
@@ -512,6 +525,21 @@ def _snmp_status_from_error(err: SnmpErrorKind | None) -> str:
     return "no_snmp"
 
 
+async def _drain_pending(pending: set[asyncio.Task]) -> None:
+    """Finish in-flight workers even if this task is cancelled again."""
+    while pending:
+        try:
+            done, pending = await asyncio.shield(asyncio.wait(pending))
+        except asyncio.CancelledError:
+            continue
+        for task in done:
+            if task.cancelled():
+                continue
+            exc = task.exception()
+            if exc is not None:
+                logger.debug("scan worker failed: %s", type(exc).__name__)
+
+
 async def _run_batches(
     items: Sequence[Any],
     concurrency: int,
@@ -553,12 +581,10 @@ async def _run_batches(
                 if exc is not None:
                     logger.debug("scan worker failed: %s", type(exc).__name__)
             if _stop():
-                if pending:
-                    await asyncio.wait(pending)
+                await _drain_pending(pending)
                 return
     except asyncio.CancelledError:
-        if pending:
-            await asyncio.shield(asyncio.wait(pending))
+        await _drain_pending(pending)
         raise
 
 
@@ -612,24 +638,37 @@ def _flush_writer(db: Session, session_id: int, batch: list[dict]) -> None:
 async def _writer_loop(session_id: int, queue: asyncio.Queue) -> None:
     db = SessionLocal()
     batch: list[dict] = []
+    failed = False
     try:
         while True:
             item = await queue.get()
             try:
-                if item is None or (isinstance(item, dict) and item.get("op") == "flush"):
-                    _flush_writer(db, session_id, batch)
+                is_stop = item is None
+                is_flush = is_stop or (
+                    isinstance(item, dict) and item.get("op") == "flush"
+                )
+                if is_flush:
+                    try:
+                        _flush_writer(db, session_id, batch)
+                    except Exception:
+                        db.rollback()
+                        logger.error("scan writer failed session=%s", session_id)
+                        failed = True
                     batch = []
-                    if item is None:
+                    if is_stop:
+                        if failed:
+                            raise RuntimeError("scan writer failed")
                         return
                     continue
                 batch.append(item)
                 if len(batch) >= _WRITER_BATCH:
-                    _flush_writer(db, session_id, batch)
+                    try:
+                        _flush_writer(db, session_id, batch)
+                    except Exception:
+                        db.rollback()
+                        logger.error("scan writer failed session=%s", session_id)
+                        failed = True
                     batch = []
-            except Exception:
-                db.rollback()
-                logger.error("scan writer failed session=%s", session_id)
-                batch = []
             finally:
                 queue.task_done()
     finally:
@@ -756,10 +795,27 @@ async def run_scan(session_id: int) -> None:
         raise
     finally:
         try:
-            await queue.put(None)
-            await writer_task
+            queue.put_nowait(None)
         except Exception:
-            logger.debug("scan writer shutdown failed", exc_info=True)
+            pass
+        while not writer_task.done():
+            try:
+                await asyncio.shield(writer_task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if writer_task.cancelled():
+            _mark_session_failed_if_unfinished(session_id, "scan writer failed")
+        else:
+            exc = writer_task.exception()
+            if exc is not None:
+                logger.error(
+                    "scan writer shutdown failed session=%s: %s",
+                    session_id,
+                    type(exc).__name__,
+                )
+                _mark_session_failed_if_unfinished(session_id, "scan writer failed")
         _finalize_session(session_id)
         if snmp_engine is not None:
             try:

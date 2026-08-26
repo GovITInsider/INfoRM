@@ -155,6 +155,14 @@ def test_clamp_scan_options_defaults():
     assert snmp_c == 8
 
 
+def test_clamp_hard_caps_override_settings(monkeypatch):
+    monkeypatch.setattr(scan_mod.settings.discovery, "max_ping_concurrency", 256)
+    monkeypatch.setattr(scan_mod.settings.discovery, "max_snmp_concurrency", 64)
+    _, ping_c, _, snmp_c = clamp_scan_options(1, 256, 2, 64)
+    assert ping_c == 64
+    assert snmp_c == 16
+
+
 def test_begin_scan_rejects_public_without_confirm(scan_db):
     with pytest.raises(PublicSpaceError):
         begin_scan("8.8.8.8")
@@ -490,6 +498,50 @@ def test_probe_hosts_does_not_write_sessions(scan_db, monkeypatch):
         assert db.query(ScanResult).count() == 0
     finally:
         db.close()
+
+
+def test_writer_flush_error_does_not_hang(scan_db, monkeypatch):
+    monkeypatch.setattr(
+        scan_mod,
+        "ping_one",
+        _ping_map({"10.50.12.10": 1.0}),
+    )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("sqlite busy")
+
+    monkeypatch.setattr(scan_mod, "_flush_writer", boom)
+    sid = begin_scan("10.50.12.10")
+    asyncio.run(asyncio.wait_for(run_scan(sid), timeout=2))
+    row = _session(scan_db, sid)
+    assert row.status == "failed"
+    assert row.error_message == "scan writer failed"
+
+
+def test_run_batches_survives_second_cancel():
+    started = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def slow_worker(_item):
+        started.set()
+        await asyncio.sleep(0.2)
+        finished.set()
+
+    async def _run():
+        task = asyncio.create_task(
+            scan_mod._run_batches(["x"], 1, slow_worker, session_id=None)
+        )
+        await started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert finished.is_set()
+
+    asyncio.run(_run())
 
 
 def test_cancel_current_scan_sets_cancelled(scan_db, monkeypatch):
