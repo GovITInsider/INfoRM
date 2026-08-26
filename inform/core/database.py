@@ -108,8 +108,11 @@ def migrate_schema() -> None:
 
 def ensure_schema() -> None:
     from inform.core import models as _models  # noqa: F401 — register metadata
+    from inform.core.secrets import encrypt_legacy_secrets
+
     Base.metadata.create_all(bind=engine)
     migrate_schema()
+    encrypt_legacy_secrets()
     ensure_db_permissions()
 
 
