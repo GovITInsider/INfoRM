@@ -129,12 +129,20 @@ def add_profile(
             if not auth_protocol:
                 auth_protocol = typer.prompt("Auth protocol", default="sha")
             stored_auth_protocol = (auth_protocol or "sha").lower()
-            stored_auth_key = encrypt_secret(_prompt_secret("Authentication key", auth_key)) or ""
+            auth_key = _prompt_secret("Authentication key", auth_key)
+            if not auth_key:
+                rprint("[red]Error:[/red] authentication key is required for this security level.")
+                return
+            stored_auth_key = encrypt_secret(auth_key) or ""
         if stored_level == "authPriv":
             if not priv_protocol:
                 priv_protocol = typer.prompt("Privacy protocol", default="aes")
             stored_priv_protocol = (priv_protocol or "aes").lower()
-            stored_priv_key = encrypt_secret(_prompt_secret("Privacy key", priv_key)) or ""
+            priv_key = _prompt_secret("Privacy key", priv_key)
+            if not priv_key:
+                rprint("[red]Error:[/red] privacy key is required for authPriv.")
+                return
+            stored_priv_key = encrypt_secret(priv_key) or ""
 
     db: Session = SessionLocal()
     try:

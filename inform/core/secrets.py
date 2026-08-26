@@ -40,7 +40,12 @@ def encrypt_secret(value: str | None) -> str | None:
     return _PREFIX + base64.urlsafe_b64encode(blob).decode("ascii")
 
 
-def decrypt_secret(value: str | None) -> str | None:
+def decrypt_secret(
+    value: str | None,
+    *,
+    profile_id: int | None = None,
+    profile_name: str | None = None,
+) -> str | None:
     if value is None:
         return None
     if not value.startswith(_PREFIX):
@@ -53,7 +58,15 @@ def decrypt_secret(value: str | None) -> str | None:
         cipher = AES.new(_aes_key(), AES.MODE_GCM, nonce=nonce)
         return cipher.decrypt_and_verify(ciphertext, tag).decode("utf-8")
     except Exception:
-        logger.error("Failed to decrypt a stored secret")
+        loc = []
+        if profile_id is not None:
+            loc.append(f"id={profile_id}")
+        if profile_name:
+            loc.append(f"name={profile_name}")
+        if loc:
+            logger.error("Failed to decrypt a stored secret (%s)", ", ".join(loc))
+        else:
+            logger.error("Failed to decrypt a stored secret")
         return None
 
 

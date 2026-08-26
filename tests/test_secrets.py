@@ -33,3 +33,14 @@ def test_community_round_trip():
     cipher = encrypt_secret("public")
     assert cipher.startswith("enc:v1:")
     assert decrypt_secret(cipher) == "public"
+
+
+def test_decrypt_failure_logs_profile_not_value(caplog):
+    import logging
+
+    bogus = "enc:v1:not-valid-ciphertext"
+    with caplog.at_level(logging.ERROR, logger="inform.secrets"):
+        assert decrypt_secret(bogus, profile_id=7, profile_name="campus-v3") is None
+    assert "id=7" in caplog.text
+    assert "campus-v3" in caplog.text
+    assert "not-valid-ciphertext" not in caplog.text

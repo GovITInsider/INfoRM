@@ -105,9 +105,15 @@ class SnmpIdentity:
 
 def auth_from_profile(profile: CredentialProfile):
     """Build pysnmp auth from a profile. Always decrypts secrets; never logs them."""
+    profile_id = getattr(profile, "id", None)
+    profile_name = getattr(profile, "name", None)
+
+    def _dec(val: str | None) -> str | None:
+        return decrypt_secret(val, profile_id=profile_id, profile_name=profile_name)
+
     version = (profile.snmp_version or "v3").lower()
     if version in ("v1", "v2c"):
-        community = decrypt_secret(profile.community) or ""
+        community = _dec(profile.community) or ""
         mp_model = 0 if version == "v1" else 1
         return CommunityData(community, mpModel=mp_model)
 
@@ -117,12 +123,12 @@ def auth_from_profile(profile: CredentialProfile):
         return UsmUserData(user, authProtocol=usmNoAuthProtocol, privProtocol=usmNoPrivProtocol)
 
     auth_proto = AUTH_PROTOCOLS.get((profile.auth_protocol or "sha").lower(), USM_AUTH_HMAC96_SHA)
-    auth_key = decrypt_secret(profile.auth_key) or ""
+    auth_key = _dec(profile.auth_key) or ""
     if level == "authnopriv":
         return UsmUserData(user, authKey=auth_key, authProtocol=auth_proto)
 
     priv_proto = PRIV_PROTOCOLS.get((profile.priv_protocol or "aes").lower(), USM_PRIV_CFB128_AES)
-    priv_key = decrypt_secret(profile.priv_key) or ""
+    priv_key = _dec(profile.priv_key) or ""
     return UsmUserData(
         user,
         authKey=auth_key,
