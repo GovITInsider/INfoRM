@@ -10,7 +10,7 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - **Web Management GUI** — Add, edit, and delete devices and buildings through a protected web interface
 - **On-demand Discover** — Scan one IPv4 or a CIDR (max `/24`); ping first, then SNMP live hosts; review and bulk-add
 - **Credential Profiles** — SNMPv1 / v2c / v3 credentials with a web UI and CLI
-- **SNMP identity** — Vendor and model from Discover or explicit **Refresh from SNMP**; reachability stays ICMP
+- **SNMP identity** — Vendor and model from Discover or explicit **Refresh from SNMP**; shown on the Devices page and in Manage. Reachability stays ICMP
 - **Building Enforcement** — Devices must be assigned to existing buildings via dropdown
 - **Authentication** — Secure login for the management area, with 8-hour sessions that renew while you work
 - **Alarm History** — Track when devices go down and come back up
@@ -148,7 +148,9 @@ Common commands:
 
 **Manage → Discover** scans one IPv4 address or CIDR (max `/24`). INfoRM pings first, then SNMPs only live unmanaged hosts. Results appear in a review grid: check rows to add, edit name/location/building/comment/asset tag/monitored, and save. Already-managed IPs are listed as in inventory and are never overwritten. Zero credential profiles is allowed (ping-only). Public (non-RFC1918) targets require the **scan public space** checkbox (CLI: `--confirm-public`).
 
-**Manage → Devices** shows vendor and model as read-only. **Refresh from SNMP** overwrites location, vendor, and model (and `sys_object_id` internally). Name updates only if you check **Also update name from sysName**. Comment, building, asset tag, and monitored are never changed by SNMP.
+The public **Devices** page (`/devices`) shows SNMP vendor and model in a compact **Vendor / Model** column after Location. Values longer than 20 characters are shortened; hover to see the full string. A dash means the device has not been discovered or refreshed yet. Search still matches the full vendor and model.
+
+**Manage → Devices** shows vendor and model as separate read-only fields. **Refresh from SNMP** overwrites location, vendor, and model (and `sys_object_id` internally). Name updates only if you check **Also update name from sysName**. Comment, building, asset tag, and monitored are never changed by SNMP.
 
 CLI `discover` is a probe: it prints a table and does **not** write `devices` or scan sessions.
 
