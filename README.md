@@ -8,10 +8,13 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - **Hybrid NOC View** — Color-coded building status with problem buildings shown as cards and healthy buildings in a compact list
 - **Status & Response Time Dashboard** — Overview of Up / Pre-Alarm / Down devices plus Min / Avg / Max response times
 - **Web Management GUI** — Add, edit, and delete devices and buildings through a protected web interface
+- **On-demand Discover** — Scan one IPv4 or a CIDR (max `/24`); ping first, then SNMP live hosts; review and bulk-add
+- **Credential Profiles** — SNMPv1 / v2c / v3 credentials with a web UI and CLI
+- **SNMP identity** — Vendor and model from Discover or explicit **Refresh from SNMP**; reachability stays ICMP
 - **Building Enforcement** — Devices must be assigned to existing buildings via dropdown
 - **Authentication** — Secure login for the management area, with 8-hour sessions that renew while you work
 - **Alarm History** — Track when devices go down and come back up
-- **Inventory export / import** — YAML backup of buildings and devices from the management UI or CLI
+- **Inventory export / import** — YAML v2 backup of buildings and devices (vendor, model, profile name; no secrets)
 - **CLI Tools** — Still available for scripting and advanced use cases
 - **Auto-Refresh** — Configurable refresh on the NOC and Devices pages
 
@@ -23,6 +26,8 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - Jinja2 + Bootstrap 5
 - fastapi-login (authentication)
 - passlib + bcrypt (password hashing)
+- pysnmp 7.1 (SNMP identity)
+- pycryptodomex (AES-256-GCM for credential secrets)
 
 ## Getting Started
 
@@ -66,7 +71,7 @@ sudo nano /opt/inform-ng/config/config.yaml
 sudo nano /opt/inform-ng/.env
 ```
 
-A secret key is generated automatically. Replace it only if you need to set your own value for `SECURITY__SECRET_KEY`.
+A secret key is generated automatically. `SECURITY__SECRET_KEY` signs admin session cookies **and** encrypts SNMP credential secrets at rest. Replacing it logs everyone out **and** makes existing community / auth / priv values undecryptable until you re-enter them on each profile. There is no re-encrypt CLI; do not rotate the key without re-entering profiles.
 
 ### Create Admin User
 
@@ -87,22 +92,38 @@ Log in to `/manage` with the admin credentials created above.
 
 INfoRM uses two configuration files:
 
-- `config/config.yaml` — General settings (monitoring intervals, auto-refresh, admin session length, etc.)
-- `.env` — Sensitive values (`SECURITY__SECRET_KEY` used for authentication)
+- `config/config.yaml` — General settings (monitoring intervals, auto-refresh, admin session length, discovery, etc.)
+- `.env` — Sensitive values (`SECURITY__SECRET_KEY` used for authentication and credential encryption)
 
 Useful `config.yaml` keys:
 
 - `monitoring.poll_interval_seconds` — how often devices are pinged
 - `web.noc_auto_refresh_seconds` / `web.auto_refresh_seconds` — public page refresh
 - `security.token_expires_minutes` — admin session lifetime (default `480` = 8 hours; renewed on each manage-page request)
+- `discovery.enabled` — when `false`, hides **Manage → Discover** and rejects CLI `discover`. Profiles and Refresh stay available (kill switch if a scan is mistaken for an attack)
+
+Scan defaults and hard caps (`discovery:` in `config.yaml.example`):
+
+| Setting | Default | Hard cap |
+| --- | --- | --- |
+| Max network | `/24` | `/24` (no `/23`) |
+| Ping timeout | 1 s | 3 s |
+| Ping concurrency | 32 | 64 |
+| SNMP timeout | 2 s | 5 s |
+| SNMP concurrency | 8 | 16 |
+| Scan max runtime | 900 s | watchdog fails a stuck session |
 
 After running the installation script, both files are created from example templates. Review them before using the system in production.
+
+`inform-web` must remain a **single uvicorn worker**. The unit file does not pass `--workers`. Multiple workers would each hold their own in-process scan task; Cancel would only stop the worker that started the scan.
+
+The monitor process pings via `/usr/bin/ping` (the `inform` user is unprivileged; Ubuntu `iputils-ping` has `cap_net_raw`). `inform/core/monitor.py` still has an unused `from icmplib import ping` leftover; discovery and monitoring do not use `icmplib`.
 
 ## Usage
 
 ### Management GUI (Recommended)
 
-The web interface at `/manage` is the easiest way to manage buildings and devices. Add buildings first; devices must be assigned to an existing building.
+The web interface at `/manage` is the easiest way to manage buildings, devices, SNMP profiles, and discovery. Add buildings first; devices must be assigned to an existing building. SNMP is used only to identify vendor/model/name/location — **not** for Up / Down health.
 
 ### CLI Tools
 
@@ -118,8 +139,22 @@ Common commands:
 - `list-devices`
 - `edit-device <ip>`
 - `search-devices <term>`
+- `add-profile` / `list-profiles` / `snmp-test`
+- `discover <ip-or-cidr>` (optional repeatable `--profile`, `--confirm-public`; probe only, does not write devices)
 - `export-inventory -o inventory.yaml`
 - `import-inventory inventory.yaml` (optional `--dry-run`)
+
+### Discover and Refresh
+
+**Manage → Discover** scans one IPv4 address or CIDR (max `/24`). INfoRM pings first, then SNMPs only live unmanaged hosts. Results appear in a review grid: check rows to add, edit name/location/building/comment/asset tag/monitored, and save. Already-managed IPs are listed as in inventory and are never overwritten. Zero credential profiles is allowed (ping-only). Public (non-RFC1918) targets require the **scan public space** checkbox (CLI: `--confirm-public`).
+
+**Manage → Devices** shows vendor and model as read-only. **Refresh from SNMP** overwrites location, vendor, and model (and `sys_object_id` internally). Name updates only if you check **Also update name from sysName**. Comment, building, asset tag, and monitored are never changed by SNMP.
+
+CLI `discover` is a probe: it prints a table and does **not** write `devices` or scan sessions.
+
+### Credential profiles
+
+**Manage → Profiles** stores SNMPv1 / v2c / v3 credentials. Community, auth key, and priv key are encrypted at rest (AES-256-GCM, key from `SECURITY__SECRET_KEY`). The UI never echoes secrets (community is shown as set / not set). Deleting a profile unlinks devices; it does not delete devices.
 
 ### Inventory backup / restore
 
@@ -130,7 +165,9 @@ cd /opt/inform-ng
 sudo -u inform ./venv/bin/python -m inform.cli.main export-inventory -o /tmp/inform-inventory.yaml
 ```
 
-Import on the same or another INfoRM host. Existing building names and device IPs are skipped (same as `add-building` / `add-device`):
+Import on the same or another INfoRM host. Existing building names and device IPs are skipped (same as `add-building` / `add-device`) — vendor, model, and profile on skipped IPs are not overwritten. Version 1 files still import (missing vendor/model/profile become empty). Version 2 files include those fields. An unknown `credential_profile` name still adds the device with the profile unset; the CLI reports `Profiles unresolved: N`. The file never contains community strings or keys.
+
+`sys_object_id` is **omitted** from YAML. It is an internal cache used by Refresh. A restore without a later Refresh leaves `sys_object_id` NULL; vendor and model in the file are enough to display.
 
 ```bash
 sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory --dry-run /tmp/inform-inventory.yaml
@@ -140,7 +177,7 @@ sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory /tmp/inform
 Example file shape:
 
 ```yaml
-version: 1
+version: 2
 buildings:
   - name: City Hall
     description: ""
@@ -152,6 +189,9 @@ devices:
     location: MDF
     comment: ""
     monitored: true
+    vendor: Cisco
+    model: C9300-48P
+    credential_profile: campus-v3
 ```
 
 Admin sessions last 8 hours by default (`security.token_expires_minutes` in `config/config.yaml`) and renew while you are using the management pages.
@@ -210,6 +250,7 @@ INfoRM/
 ├── inform/                 # Core application logic
 │   ├── cli/                # Command-line tools
 │   ├── core/               # Database, models, monitoring, auth
+│   ├── snmp/               # pysnmp client, identity, scan
 │   └── version.py
 ├── web/                    # FastAPI web application
 │   ├── templates/          # Jinja2 templates
@@ -226,4 +267,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.1.3
+Current version: 1.2.0

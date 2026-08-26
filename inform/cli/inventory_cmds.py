@@ -22,7 +22,10 @@ def register_inventory(app: typer.Typer) -> None:
             help="Write YAML to this file (default: stdout)",
         ),
     ):
-        """Export buildings and devices to a YAML inventory file."""
+        """Export buildings and devices to a YAML inventory file.
+
+        Version 2 includes vendor, model, and credential profile name (never secrets).
+        """
         from inform.core.inventory import build_inventory, dump_inventory_yaml
 
         db: Session = SessionLocal()
@@ -47,6 +50,7 @@ def register_inventory(app: typer.Typer) -> None:
         """Import buildings and devices from a YAML inventory file.
 
         Existing building names and device IPs are skipped (same as add-building / add-device).
+        Unknown credential_profile names still add the device (profile left unset).
         """
         from inform.core.inventory import load_inventory_yaml, import_inventory
 
@@ -62,6 +66,7 @@ def register_inventory(app: typer.Typer) -> None:
             prefix = "[yellow]Dry run[/yellow] — " if dry_run else "[green]✓[/green] "
             rprint(f"{prefix}Buildings added: [bold]{stats['buildings_added']}[/bold], skipped: {stats['buildings_skipped']}")
             rprint(f"{prefix}Devices added: [bold]{stats['devices_added']}[/bold], skipped: {stats['devices_skipped']}")
+            rprint(f"{prefix}Profiles unresolved: {stats['profiles_unresolved']}")
         except Exception as e:
             db.rollback()
             rprint(f"[red]Error importing inventory:[/red] {e}")

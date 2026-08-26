@@ -7,14 +7,16 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
-from inform.core.models import Building, Device
+from inform.core.models import Building, CredentialProfile, Device
 
-INVENTORY_VERSION = 1
+INVENTORY_VERSION = 2
+SUPPORTED_INVENTORY_VERSIONS = {1, 2}
 
 
 def build_inventory(db: Session) -> dict[str, Any]:
     buildings = db.query(Building).order_by(Building.name).all()
     devices = db.query(Device).order_by(Device.ip_address).all()
+    profile_names = {p.id: p.name for p in db.query(CredentialProfile).all()}
     return {
         "version": INVENTORY_VERSION,
         "buildings": [
@@ -33,6 +35,12 @@ def build_inventory(db: Session) -> dict[str, Any]:
                 "location": d.location or "",
                 "comment": d.comment or "",
                 "monitored": bool(d.monitored),
+                "vendor": d.vendor or "",
+                "model": d.model or "",
+                "credential_profile": profile_names.get(d.credential_profile_id, "")
+                if d.credential_profile_id
+                else "",
+                # sys_object_id is an internal refresh cache; omit from backups
             }
             for d in devices
         ],
@@ -52,6 +60,11 @@ def load_inventory_yaml(text: str) -> dict[str, Any]:
     raw = yaml.safe_load(text) or {}
     if not isinstance(raw, dict):
         raise ValueError("Inventory file must be a YAML mapping with buildings and devices lists.")
+
+    if "version" in raw and raw["version"] not in SUPPORTED_INVENTORY_VERSIONS:
+        raise ValueError(
+            f"Unsupported inventory version {raw['version']!r}. Expected 1 or 2."
+        )
 
     buildings = raw.get("buildings") or []
     devices = raw.get("devices") or []
@@ -82,9 +95,16 @@ def load_inventory_yaml(text: str) -> dict[str, Any]:
             "location": str(item.get("location") or "").strip(),
             "comment": str(item.get("comment") or "").strip(),
             "monitored": bool(monitored),
+            "vendor": str(item.get("vendor") or "").strip(),
+            "model": str(item.get("model") or "").strip(),
+            "credential_profile": str(item.get("credential_profile") or "").strip(),
         })
 
-    return {"version": raw.get("version", INVENTORY_VERSION), "buildings": cleaned_buildings, "devices": cleaned_devices}
+    return {
+        "version": raw.get("version", INVENTORY_VERSION),
+        "buildings": cleaned_buildings,
+        "devices": cleaned_devices,
+    }
 
 
 def import_inventory(db: Session, inventory: dict[str, Any], dry_run: bool = False) -> dict[str, int]:
@@ -94,6 +114,7 @@ def import_inventory(db: Session, inventory: dict[str, Any], dry_run: bool = Fal
         "buildings_skipped": 0,
         "devices_added": 0,
         "devices_skipped": 0,
+        "profiles_unresolved": 0,
     }
 
     for item in inventory.get("buildings", []):
@@ -124,6 +145,19 @@ def import_inventory(db: Session, inventory: dict[str, Any], dry_run: bool = Fal
             stats["buildings_added"] += 1
             db.flush()
 
+        profile_name = item.get("credential_profile") or ""
+        profile_id = None
+        if profile_name:
+            profile = (
+                db.query(CredentialProfile)
+                .filter(CredentialProfile.name == profile_name)
+                .first()
+            )
+            if profile:
+                profile_id = profile.id
+            else:
+                stats["profiles_unresolved"] += 1
+
         db.add(Device(
             ip_address=ip,
             asset_tag=asset_tag,
@@ -132,6 +166,9 @@ def import_inventory(db: Session, inventory: dict[str, Any], dry_run: bool = Fal
             location=item.get("location") or None,
             comment=item.get("comment") or None,
             monitored=item.get("monitored", True),
+            vendor=item.get("vendor") or None,
+            model=item.get("model") or None,
+            credential_profile_id=profile_id,
         ))
         stats["devices_added"] += 1
 
