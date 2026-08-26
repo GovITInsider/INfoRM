@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
@@ -6,7 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 from collections import defaultdict
 
 from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
-from inform.core.models import Device, Building, AlarmEvent
+from inform.core.models import Device, Building, AlarmEvent, CredentialProfile, DiscoveryJob, ScanResult
 from inform.core.config import settings
 from inform.core.auth import (
     manager,
@@ -18,11 +19,16 @@ from inform.core.auth import (
     username_from_token,
 )
 from inform.core.inventory import build_inventory, dump_inventory_yaml
+from inform.core.secrets import encrypt_secret
 from inform.version import __version__
 from inform.core.timeutils import to_local
+from inform.snmp.client import SnmpEngine, SnmpErrorKind, identify
+from inform.snmp.targets import TargetParseError, parse_scan_target
 
 from starlette.responses import RedirectResponse
-from sqlalchemy import text
+from sqlalchemy import func, text
+
+logger = logging.getLogger("inform.web")
 
 
 # Ensure database permissions on startup
@@ -86,6 +92,202 @@ def device_to_dict(device):
         "last_checked": device.last_checked.strftime('%Y-%m-%d %H:%M:%S') if device.last_checked else 'Never',
         "monitored": device.monitored,
     }
+
+
+_VALID_VERSIONS = ("v1", "v2c", "v3")
+_VALID_LEVELS = {
+    "authpriv": "authPriv",
+    "authnopriv": "authNoPriv",
+    "noauthnopriv": "noAuthNoPriv",
+}
+_VALID_AUTH = ("md5", "sha", "sha256")
+_VALID_PRIV = ("des", "aes", "aes128")
+
+
+def _public_profile(profile, device_count=0):
+    """Template-safe profile dict. Never includes community, auth_key, or priv_key."""
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "description": profile.description or "",
+        "snmp_version": profile.snmp_version or "v3",
+        "security_level": profile.security_level or "",
+        "username": profile.username or "",
+        "auth_protocol": profile.auth_protocol or "",
+        "priv_protocol": profile.priv_protocol or "",
+        "community_set": bool(profile.community),
+        "auth_key_set": bool(profile.auth_key),
+        "priv_key_set": bool(profile.priv_key),
+        "device_count": device_count,
+    }
+
+
+def _form_from_public(pub):
+    return {
+        "name": pub.get("name", ""),
+        "description": pub.get("description", ""),
+        "snmp_version": pub.get("snmp_version") or "v3",
+        "security_level": pub.get("security_level") or "authPriv",
+        "username": pub.get("username", ""),
+        "auth_protocol": pub.get("auth_protocol") or "sha",
+        "priv_protocol": pub.get("priv_protocol") or "aes",
+    }
+
+
+def _posted_profile_form(
+    name, description, snmp_version, security_level, username, auth_protocol, priv_protocol
+):
+    return {
+        "name": (name or "").strip(),
+        "description": (description or "").strip(),
+        "snmp_version": (snmp_version or "v3").strip(),
+        "security_level": (security_level or "authPriv").strip(),
+        "username": (username or "").strip(),
+        "auth_protocol": (auth_protocol or "sha").strip().lower(),
+        "priv_protocol": (priv_protocol or "aes").strip().lower(),
+    }
+
+
+def _list_public_profiles(db):
+    profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
+    counts = dict(
+        db.query(Device.credential_profile_id, func.count(Device.id))
+        .group_by(Device.credential_profile_id)
+        .all()
+    )
+    return [_public_profile(p, counts.get(p.id, 0)) for p in profiles]
+
+
+def _render_profiles_page(request, db, *, error=None, test_result=None, edit_id=None, form=None):
+    pubs = _list_public_profiles(db)
+    edit_profile = None
+    if edit_id:
+        edit_profile = next((p for p in pubs if p["id"] == edit_id), None)
+    if form is None:
+        form = _form_from_public(edit_profile) if edit_profile else {}
+    return templates.get_template("manage/profiles.html").render(
+        request=request,
+        profiles=pubs,
+        edit_profile=edit_profile,
+        form=form,
+        error=error,
+        test_result=test_result,
+    )
+
+
+def _keep_or_encrypt(new_value, existing):
+    if new_value:
+        return encrypt_secret(new_value) or ""
+    if existing:
+        return existing
+    return ""
+
+
+def _build_profile_fields(form, *, community, auth_key, priv_key, existing=None):
+    """Validate posted profile fields. Returns (fields, error). Never echoes secrets."""
+    name = form["name"]
+    if not name:
+        return None, "Name is required."
+    if len(name) > 50:
+        return None, "Name must be 50 characters or fewer."
+    description = form["description"] or None
+    if description and len(description) > 200:
+        return None, "Description must be 200 characters or fewer."
+
+    version = form["snmp_version"].lower()
+    if version not in _VALID_VERSIONS:
+        return None, "SNMP version must be v1, v2c, or v3."
+
+    community = (community or "").strip()
+    username = form["username"]
+    if len(username) > 50:
+        return None, "Username must be 50 characters or fewer."
+    auth_key = (auth_key or "").strip()
+    priv_key = (priv_key or "").strip()
+    auth_protocol = form["auth_protocol"]
+    priv_protocol = form["priv_protocol"]
+
+    fields = {
+        "name": name,
+        "description": description,
+        "snmp_version": version,
+        "security_level": "",
+        "community": None,
+        "username": "",
+        "auth_protocol": "",
+        "auth_key": "",
+        "priv_protocol": "",
+        "priv_key": "",
+    }
+
+    if version in ("v1", "v2c"):
+        stored = existing.community if existing else None
+        if not community and not stored:
+            return None, "Community is required for v1/v2c profiles."
+        fields["community"] = encrypt_secret(community) if community else stored
+        return fields, None
+
+    level = _VALID_LEVELS.get(form["security_level"].replace(" ", "").lower())
+    if level is None:
+        return None, "Security level must be authPriv, authNoPriv, or noAuthNoPriv."
+    if not username:
+        return None, "Username is required for SNMPv3."
+    fields["username"] = username
+    fields["security_level"] = level
+    fields["community"] = None
+
+    if level in ("authNoPriv", "authPriv"):
+        if auth_protocol not in _VALID_AUTH:
+            return None, "Auth protocol must be sha, sha256, or md5."
+        stored_auth = existing.auth_key if existing and (existing.snmp_version or "").lower() == "v3" else ""
+        if not auth_key and not stored_auth:
+            return None, "Authentication key is required for this security level."
+        fields["auth_protocol"] = auth_protocol
+        fields["auth_key"] = _keep_or_encrypt(auth_key, stored_auth)
+
+    if level == "authPriv":
+        if priv_protocol not in _VALID_PRIV:
+            return None, "Privacy protocol must be aes or des."
+        stored_priv = existing.priv_key if existing and (existing.snmp_version or "").lower() == "v3" else ""
+        if not priv_key and not stored_priv:
+            return None, "Privacy key is required for authPriv."
+        fields["priv_protocol"] = priv_protocol
+        fields["priv_key"] = _keep_or_encrypt(priv_key, stored_priv)
+
+    return fields, None
+
+
+def _apply_profile_fields(profile, fields):
+    profile.name = fields["name"]
+    profile.description = fields["description"]
+    profile.snmp_version = fields["snmp_version"]
+    profile.security_level = fields["security_level"]
+    profile.community = fields["community"]
+    profile.username = fields["username"]
+    profile.auth_protocol = fields["auth_protocol"]
+    profile.auth_key = fields["auth_key"]
+    profile.priv_protocol = fields["priv_protocol"]
+    profile.priv_key = fields["priv_key"]
+
+
+def _parse_test_ip(raw):
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("IP address is required")
+    if "/" in text:
+        raise ValueError("Test requires a single IPv4 address")
+    parsed = parse_scan_target(text)
+    return str(parsed.hosts[0])
+
+
+def _optional_int(raw):
+    text = "" if raw is None else str(raw).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
 
 
 # ========================
@@ -426,6 +628,203 @@ async def delete_building(building_id: int, user=Depends(manager)):
         db.close()
 
 # ========================
+# Credential Profile Management
+# ========================
+
+@app.get("/manage/profiles", response_class=HTMLResponse)
+async def manage_profiles(request: Request, edit: int = None, user=Depends(manager)):
+    db = SessionLocal()
+    try:
+        html = _render_profiles_page(request, db, edit_id=edit)
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+@app.post("/manage/profiles")
+async def add_or_update_profile(
+    request: Request,
+    name: str = Form(""),
+    description: str = Form(""),
+    snmp_version: str = Form("v3"),
+    security_level: str = Form("authPriv"),
+    community: str = Form(""),
+    username: str = Form(""),
+    auth_protocol: str = Form("sha"),
+    auth_key: str = Form(""),
+    priv_protocol: str = Form("aes"),
+    priv_key: str = Form(""),
+    profile_id: str = Form(""),
+    user=Depends(manager),
+):
+    form = _posted_profile_form(
+        name, description, snmp_version, security_level, username, auth_protocol, priv_protocol
+    )
+    profile_id = _optional_int(profile_id)
+    db = SessionLocal()
+    try:
+        existing = None
+        if profile_id:
+            existing = db.query(CredentialProfile).filter(CredentialProfile.id == profile_id).first()
+            if not existing:
+                html = _render_profiles_page(request, db, error="Profile not found.", form=form)
+                return HTMLResponse(content=html)
+
+        dup = db.query(CredentialProfile).filter(CredentialProfile.name == form["name"])
+        if profile_id:
+            dup = dup.filter(CredentialProfile.id != profile_id)
+        if dup.first():
+            html = _render_profiles_page(
+                request, db, error=f"Profile '{form['name']}' already exists.",
+                edit_id=profile_id, form=form,
+            )
+            return HTMLResponse(content=html)
+
+        fields, error = _build_profile_fields(
+            form,
+            community=community,
+            auth_key=auth_key,
+            priv_key=priv_key,
+            existing=existing,
+        )
+        if error:
+            html = _render_profiles_page(
+                request, db, error=error, edit_id=profile_id, form=form,
+            )
+            return HTMLResponse(content=html)
+
+        if existing:
+            _apply_profile_fields(existing, fields)
+        else:
+            profile = CredentialProfile()
+            _apply_profile_fields(profile, fields)
+            db.add(profile)
+
+        db.commit()
+        return RedirectResponse(
+            url="/manage/profiles?success=Profile added/edited successfully",
+            status_code=302,
+        )
+    except Exception:
+        db.rollback()
+        logger.error("Failed to save credential profile")
+        html = _render_profiles_page(
+            request, db, error="Failed to save profile.", edit_id=profile_id, form=form,
+        )
+        return HTMLResponse(content=html, status_code=200)
+    finally:
+        db.close()
+
+
+@app.get("/manage/profiles/{profile_id}/delete")
+async def delete_profile(profile_id: int, user=Depends(manager)):
+    db = SessionLocal()
+    try:
+        profile = db.query(CredentialProfile).filter(CredentialProfile.id == profile_id).first()
+        if profile:
+            # Application-level cleanup; PRAGMA foreign_keys stays off.
+            db.query(Device).filter(Device.credential_profile_id == profile_id).update(
+                {Device.credential_profile_id: None},
+                synchronize_session=False,
+            )
+            db.query(DiscoveryJob).filter(DiscoveryJob.credential_profile_id == profile_id).delete(
+                synchronize_session=False,
+            )
+            db.query(ScanResult).filter(ScanResult.credential_profile_id == profile_id).update(
+                {ScanResult.credential_profile_id: None},
+                synchronize_session=False,
+            )
+            db.delete(profile)
+            db.commit()
+        return RedirectResponse(
+            url="/manage/profiles?success=Profile deleted successfully",
+            status_code=302,
+        )
+    finally:
+        db.close()
+
+
+@app.post("/manage/profiles/{profile_id}/test")
+async def test_profile(
+    request: Request,
+    profile_id: int,
+    ip: str = Form(""),
+    user=Depends(manager),
+):
+    db = SessionLocal()
+    try:
+        profile = db.query(CredentialProfile).filter(CredentialProfile.id == profile_id).first()
+        if not profile:
+            html = _render_profiles_page(request, db, error="Profile not found.")
+            return HTMLResponse(content=html)
+
+        try:
+            test_ip = _parse_test_ip(ip)
+        except (ValueError, TargetParseError) as exc:
+            html = _render_profiles_page(request, db, error=str(exc))
+            return HTMLResponse(content=html)
+
+        timeout = float(settings.discovery.default_snmp_timeout_seconds)
+        engine = SnmpEngine()
+        try:
+            identity, err, _ = await identify(
+                engine, test_ip, [profile], timeout, retries=1,
+            )
+        except Exception as exc:
+            logger.error(
+                "SNMP profile test failed for %s profile %s: %s",
+                test_ip,
+                profile.name,
+                type(exc).__name__,
+            )
+            identity, err = None, SnmpErrorKind.OTHER
+        finally:
+            engine.close_dispatcher()
+
+        if identity is not None:
+            result = {
+                "ok": True,
+                "ip": test_ip,
+                "profile_name": profile.name,
+                "sys_name": identity.sys_name,
+                "sys_location": identity.sys_location,
+                "vendor": identity.vendor,
+                "model": identity.model,
+                "sys_object_id": identity.sys_object_id,
+            }
+            logger.info(
+                "SNMP profile test user=%s profile=%s ip=%s result=ok",
+                getattr(user, "username", None),
+                profile.name,
+                test_ip,
+            )
+        else:
+            if err == SnmpErrorKind.TIMEOUT:
+                err_label = "timeout"
+            elif err == SnmpErrorKind.AUTH:
+                err_label = "auth fail"
+            else:
+                err_label = "failed"
+            result = {
+                "ok": False,
+                "ip": test_ip,
+                "profile_name": profile.name,
+                "error": err_label,
+            }
+            logger.info(
+                "SNMP profile test user=%s profile=%s ip=%s result=%s",
+                getattr(user, "username", None),
+                profile.name,
+                test_ip,
+                err_label,
+            )
+
+        html = _render_profiles_page(request, db, test_result=result)
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+# ========================
 # Device Management
 # ========================
 
@@ -435,12 +834,14 @@ async def manage_devices(request: Request, edit: int = None, user=Depends(manage
     try:
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
+        profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
         edit_device = db.query(Device).filter(Device.id == edit).first() if edit else None
 
         return templates.get_template("manage/devices.html").render(
             request=request,
             devices=devices,
             buildings=buildings,
+            profiles=profiles,
             edit_device=edit_device
         )
     finally:
@@ -457,6 +858,7 @@ async def save_device(
     location: str = Form(""),
     comment: str = Form(""),
     monitored: bool = Form(False),
+    credential_profile_id: str = Form(""),
     device_id: int = Form(None),
     user=Depends(manager)
 ):
@@ -469,6 +871,25 @@ async def save_device(
         #print(f"comment received from form = '{comment}'")
         # =======================================================
 
+        profile_fk = None
+        credential_profile_id = _optional_int(credential_profile_id)
+        if credential_profile_id:
+            cred = db.query(CredentialProfile).filter(
+                CredentialProfile.id == credential_profile_id
+            ).first()
+            if not cred:
+                devices = db.query(Device).order_by(Device.ip_address).all()
+                buildings = db.query(Building).order_by(Building.name).all()
+                profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
+                return templates.get_template("manage/devices.html").render(
+                    request=request,
+                    devices=devices,
+                    buildings=buildings,
+                    profiles=profiles,
+                    error="Credential profile not found.",
+                )
+            profile_fk = cred.id
+
         if device_id:  # Editing
             device = db.query(Device).filter(Device.id == device_id).first()
             if device:
@@ -480,16 +901,19 @@ async def save_device(
                 device.location = location.strip() if location else None
                 device.comment = comment.strip() if comment else None
                 device.monitored = monitored
+                device.credential_profile_id = profile_fk
                 #print(f"Set device.comment to: '{device.comment}'")  # for debug
         else:  # Adding new
             existing = db.query(Device).filter(Device.ip_address == ip_address.strip()).first()
             if existing:
                 devices = db.query(Device).order_by(Device.ip_address).all()
                 buildings = db.query(Building).order_by(Building.name).all()
+                profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
                 return templates.get_template("manage/devices.html").render(
                     request=request,
                     devices=devices,
                     buildings=buildings,
+                    profiles=profiles,
                     error=f"Device with IP {ip_address} already exists."
                 )
 
@@ -500,7 +924,8 @@ async def save_device(
                 building=building,
                 location=location.strip() if location else None,
                 comment=comment.strip() if comment else None,
-                monitored=monitored
+                monitored=monitored,
+                credential_profile_id=profile_fk,
             )
             db.add(device)
 
@@ -510,10 +935,12 @@ async def save_device(
         db.rollback()
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
+        profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
         html = templates.get_template("manage/devices.html").render(
             request=request,
             devices=devices,
             buildings=buildings,
+            profiles=profiles,
             error=str(e)
         )
         return HTMLResponse(content=html, status_code=200)
