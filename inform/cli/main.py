@@ -4,6 +4,7 @@ from sqlalchemy.exc import SAWarning
 # Suppress the "declarative base already contains" warning
 warnings.filterwarnings("ignore", category=SAWarning)
 
+import asyncio
 import typer
 from rich import print as rprint
 from rich.table import Table
@@ -15,6 +16,8 @@ from inform.core.models import Building, CredentialProfile, Device
 from inform.core.config import settings
 from inform.core.secrets import encrypt_secret
 from inform.snmp.client import get_device_info
+from inform.snmp.scan import clamp_scan_options, probe_hosts
+from inform.snmp.targets import TargetParseError, parse_scan_target
 
 
 
@@ -552,6 +555,108 @@ def snmp_test(
         rprint(f"[red]SNMP Error:[/red] {e}")
     finally:
         db.close()
+
+
+@app.command()
+def discover(
+    target: str = typer.Argument(..., help="IPv4 address or CIDR (max /24)"),
+    profile: list[str] = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="Credential profile name (repeatable, try order)",
+    ),
+    confirm_public: bool = typer.Option(
+        False,
+        "--confirm-public",
+        help="Required when the target includes public IPv4 space",
+    ),
+):
+    """Probe a subnet with ping then SNMP. Does not write inventory or scan sessions."""
+    if not settings.discovery.enabled:
+        rprint("[red]Error:[/red] Discovery is disabled.")
+        raise typer.Exit(code=1)
+
+    try:
+        parsed = parse_scan_target(target)
+    except TargetParseError as exc:
+        rprint(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    if parsed.contains_public and not confirm_public:
+        typer.echo(
+            "This address is not RFC1918. Pass --confirm-public to continue.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    profile_names = profile or []
+    ping_timeout, ping_conc, snmp_timeout, snmp_conc = clamp_scan_options()
+    db: Session = SessionLocal()
+    try:
+        profiles: list[CredentialProfile] = []
+        for name in profile_names:
+            cred = (
+                db.query(CredentialProfile)
+                .filter(CredentialProfile.name == name)
+                .first()
+            )
+            if not cred:
+                rprint(f"[red]Error:[/red] SNMP profile '{name}' not found.")
+                raise typer.Exit(code=1)
+            db.expunge(cred)
+            profiles.append(cred)
+        managed = {d.ip_address: d.id for d in db.query(Device).all()}
+    finally:
+        db.close()
+
+    hosts = [str(ip) for ip in parsed.hosts]
+    rprint(
+        f"[bold]Discover[/bold] {target} "
+        f"({len(hosts)} host{'s' if len(hosts) != 1 else ''}, "
+        f"profiles: {', '.join(profile_names) if profile_names else 'none'})"
+    )
+
+    rows = asyncio.run(
+        probe_hosts(
+            hosts,
+            profiles,
+            ping_timeout=ping_timeout,
+            ping_concurrency=ping_conc,
+            snmp_timeout=snmp_timeout,
+            snmp_concurrency=snmp_conc,
+            managed=managed,
+        )
+    )
+
+    if not rows:
+        rprint("[yellow]No live or managed hosts found.[/yellow]")
+        return
+
+    table = Table(title="Discover results")
+    table.add_column("IP", style="green")
+    table.add_column("Ping RTT")
+    table.add_column("SNMP")
+    table.add_column("Name")
+    table.add_column("Location")
+    table.add_column("Vendor")
+    table.add_column("Model")
+    table.add_column("Already managed")
+
+    for row in rows:
+        rtt = row.get("ping_rtt_ms")
+        rtt_text = f"{rtt:.1f} ms" if rtt is not None else "-"
+        table.add_row(
+            row["ip"],
+            rtt_text,
+            str(row.get("snmp_status") or ""),
+            row.get("name") or "-",
+            row.get("location") or "-",
+            row.get("vendor") or "-",
+            row.get("model") or "-",
+            "yes" if row.get("already_managed") else "no",
+        )
+    console.print(table)
 
 # ============================================================
 # Building Management Commands

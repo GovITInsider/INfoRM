@@ -8,6 +8,7 @@ from jinja2 import Environment, FileSystemLoader
 from collections import defaultdict
 
 from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
+from inform.snmp.scan import cancel_current_scan, fail_interrupted_sessions
 from inform.core.models import Device, Building, AlarmEvent, CredentialProfile, DiscoveryJob, ScanResult
 from inform.core.config import settings
 from inform.core.auth import (
@@ -39,7 +40,9 @@ ensure_db_permissions()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_schema()
+    fail_interrupted_sessions("interrupted by process restart")
     yield
+    await cancel_current_scan()
 
 
 app = FastAPI(title="INfoRM", version=__version__, lifespan=lifespan)
