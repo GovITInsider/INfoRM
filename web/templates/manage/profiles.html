@@ -1,0 +1,263 @@
+{% extends "manage/base.html" %}
+
+{% block manage_title %}Profiles{% endblock %}
+
+{% block manage_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Credential Profiles</h2>
+</div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+{% if test_result %}
+    {% if test_result.ok %}
+    <div class="alert alert-success">
+        <strong>SNMP ok</strong> — {{ test_result.profile_name }} @ {{ test_result.ip }}
+        <ul class="mb-0 mt-2">
+            <li>Name: {{ test_result.sys_name or "—" }}</li>
+            <li>Location: {{ test_result.sys_location or "—" }}</li>
+            <li>Vendor: {{ test_result.vendor or "—" }}</li>
+            <li>Model: {{ test_result.model or "—" }}</li>
+            <li>sysObjectID: {{ test_result.sys_object_id or "—" }}</li>
+        </ul>
+    </div>
+    {% else %}
+    <div class="alert alert-danger">
+        <strong>SNMP {{ test_result.error }}</strong> — {{ test_result.profile_name }} @ {{ test_result.ip }}
+    </div>
+    {% endif %}
+{% endif %}
+
+<div class="card mb-4">
+    <div class="card-header">
+        <strong>{% if edit_profile %}Edit Profile{% else %}Add New Profile{% endif %}</strong>
+    </div>
+    <div class="card-body">
+        <form method="post" action="/manage/profiles" autocomplete="off" id="profileForm">
+            <input type="hidden" name="profile_id" value="{{ edit_profile.id if edit_profile else '' }}">
+
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Name *</label>
+                    <input type="text" name="name" class="form-control" maxlength="50"
+                           value="{{ form.get('name', '') }}" required>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" class="form-control" maxlength="200"
+                           value="{{ form.get('description', '') }}">
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label">SNMP version *</label>
+                    <select name="snmp_version" id="snmp_version" class="form-select">
+                        {% set version = form.get('snmp_version', 'v3') %}
+                        <option value="v3" {% if version == 'v3' %}selected{% endif %}>v3</option>
+                        <option value="v2c" {% if version == 'v2c' %}selected{% endif %}>v2c</option>
+                        <option value="v1" {% if version == 'v1' %}selected{% endif %}>v1</option>
+                    </select>
+                </div>
+
+                <div class="col-md-8 field-community">
+                    <label class="form-label">Community{% if not edit_profile %} *{% endif %}</label>
+                    <input type="password" name="community" id="community" class="form-control"
+                           autocomplete="new-password"
+                           placeholder="{% if edit_profile %}Leave blank to keep existing{% endif %}">
+                    {% if edit_profile %}
+                    <div class="form-text">{{ "set" if edit_profile.community_set else "not set" }}. Leave blank to keep the stored value.</div>
+                    {% endif %}
+                </div>
+
+                <div class="col-md-4 field-v3">
+                    <label class="form-label">Username *</label>
+                    <input type="text" name="username" id="username" class="form-control" maxlength="50"
+                           value="{{ form.get('username', '') }}" autocomplete="off">
+                </div>
+                <div class="col-md-4 field-v3">
+                    <label class="form-label">Security level *</label>
+                    {% set level = form.get('security_level', 'authPriv') %}
+                    <select name="security_level" id="security_level" class="form-select">
+                        <option value="authPriv" {% if level == 'authPriv' %}selected{% endif %}>authPriv</option>
+                        <option value="authNoPriv" {% if level == 'authNoPriv' %}selected{% endif %}>authNoPriv</option>
+                        <option value="noAuthNoPriv" {% if level == 'noAuthNoPriv' %}selected{% endif %}>noAuthNoPriv</option>
+                    </select>
+                </div>
+
+                <div class="col-md-4 field-auth">
+                    <label class="form-label">Auth protocol</label>
+                    {% set authp = form.get('auth_protocol', 'sha') %}
+                    <select name="auth_protocol" id="auth_protocol" class="form-select">
+                        <option value="sha" {% if authp == 'sha' %}selected{% endif %}>sha</option>
+                        <option value="sha256" {% if authp == 'sha256' %}selected{% endif %}>sha256</option>
+                        <option value="md5" {% if authp == 'md5' %}selected{% endif %}>md5</option>
+                    </select>
+                </div>
+                <div class="col-md-4 field-auth">
+                    <label class="form-label">Auth key{% if not edit_profile %} *{% endif %}</label>
+                    <input type="password" name="auth_key" id="auth_key" class="form-control"
+                           autocomplete="new-password"
+                           placeholder="{% if edit_profile %}Leave blank to keep existing{% endif %}">
+                    {% if edit_profile %}
+                    <div class="form-text">{{ "set" if edit_profile.auth_key_set else "not set" }}. Leave blank to keep the stored value.</div>
+                    {% endif %}
+                </div>
+
+                <div class="col-md-4 field-priv">
+                    <label class="form-label">Priv protocol</label>
+                    {% set privp = form.get('priv_protocol', 'aes') %}
+                    <select name="priv_protocol" id="priv_protocol" class="form-select">
+                        <option value="aes" {% if privp in ('aes', 'aes128') %}selected{% endif %}>aes</option>
+                        <option value="des" {% if privp == 'des' %}selected{% endif %}>des</option>
+                    </select>
+                </div>
+                <div class="col-md-4 field-priv">
+                    <label class="form-label">Priv key{% if not edit_profile %} *{% endif %}</label>
+                    <input type="password" name="priv_key" id="priv_key" class="form-control"
+                           autocomplete="new-password"
+                           placeholder="{% if edit_profile %}Leave blank to keep existing{% endif %}">
+                    {% if edit_profile %}
+                    <div class="form-text">{{ "set" if edit_profile.priv_key_set else "not set" }}. Leave blank to keep the stored value.</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    {% if edit_profile %}Update Profile{% else %}Add Profile{% endif %}
+                </button>
+                {% if edit_profile %}
+                <a href="/manage/profiles" class="btn btn-secondary">Cancel</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <strong>Existing Profiles ({{ profiles|length }})</strong>
+    </div>
+    <div class="card-body p-0">
+        {% if profiles %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Name</th>
+                        <th>Version</th>
+                        <th>Identity</th>
+                        <th>Security</th>
+                        <th>Auth</th>
+                        <th>Priv</th>
+                        <th>Description</th>
+                        <th>Devices</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in profiles %}
+                    <tr>
+                        <td>{{ p.name }}</td>
+                        <td>{{ p.snmp_version }}</td>
+                        <td>
+                            {% if p.snmp_version in ('v1', 'v2c') %}
+                                {{ "set" if p.community_set else "not set" }}
+                            {% else %}
+                                {{ p.username or "—" }}
+                            {% endif %}
+                        </td>
+                        <td>{{ p.security_level or "—" }}</td>
+                        <td>{{ p.auth_protocol or "—" }}</td>
+                        <td>{{ p.priv_protocol or "—" }}</td>
+                        <td>{{ p.description or "—" }}</td>
+                        <td>{{ p.device_count }}</td>
+                        <td class="text-end">
+                            <div class="d-flex flex-wrap justify-content-end gap-1 align-items-center">
+                                <a href="/manage/profiles?edit={{ p.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <form method="post" action="/manage/profiles/{{ p.id }}/test" class="d-flex gap-1" autocomplete="off">
+                                    <input type="text" name="ip" class="form-control form-control-sm" placeholder="IPv4" required style="width: 8.5rem;">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Test</button>
+                                </form>
+                                <a href="/manage/profiles/{{ p.id }}/delete"
+                                   class="btn btn-sm btn-outline-danger"
+                                   onclick="return confirm('Delete this profile? Linked devices keep working without SNMP credentials.');">
+                                    Delete
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted">No credential profiles found.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="mt-4 pt-3 border-top">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <small class="text-muted">
+                INfoRM v{{ app_version }}
+            </small>
+        </div>
+        <div>
+            <span class="badge bg-secondary">End of List</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function toggleProfileFields() {
+    const version = document.getElementById('snmp_version').value;
+    const level = document.getElementById('security_level').value;
+    const isEdit = Boolean(document.querySelector('input[name="profile_id"]').value);
+    const isV3 = version === 'v3';
+    const needAuth = isV3 && level !== 'noAuthNoPriv';
+    const needPriv = isV3 && level === 'authPriv';
+
+    document.querySelectorAll('.field-community').forEach(el => {
+        el.classList.toggle('d-none', isV3);
+    });
+    document.querySelectorAll('.field-v3').forEach(el => {
+        el.classList.toggle('d-none', !isV3);
+    });
+    document.querySelectorAll('.field-auth').forEach(el => {
+        el.classList.toggle('d-none', !needAuth);
+    });
+    document.querySelectorAll('.field-priv').forEach(el => {
+        el.classList.toggle('d-none', !needPriv);
+    });
+
+    const community = document.getElementById('community');
+    const username = document.getElementById('username');
+    const authProtocol = document.getElementById('auth_protocol');
+    const authKey = document.getElementById('auth_key');
+    const privProtocol = document.getElementById('priv_protocol');
+    const privKey = document.getElementById('priv_key');
+
+    const securityLevel = document.getElementById('security_level');
+    community.disabled = isV3;
+    community.required = !isV3 && !isEdit;
+    username.disabled = !isV3;
+    username.required = isV3;
+    securityLevel.disabled = !isV3;
+    authProtocol.disabled = !needAuth;
+    authKey.disabled = !needAuth;
+    authKey.required = needAuth && !isEdit;
+    privProtocol.disabled = !needPriv;
+    privKey.disabled = !needPriv;
+    privKey.required = needPriv && !isEdit;
+}
+
+document.getElementById('snmp_version').addEventListener('change', toggleProfileFields);
+document.getElementById('security_level').addEventListener('change', toggleProfileFields);
+toggleProfileFields();
+</script>
+{% endblock %}

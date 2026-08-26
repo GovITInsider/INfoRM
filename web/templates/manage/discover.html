@@ -1,0 +1,431 @@
+{% extends "manage/base.html" %}
+
+{% block manage_title %}Discover{% endblock %}
+
+{% block manage_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Discover</h2>
+</div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+{% if not buildings %}
+<div class="alert alert-warning">Add a building before adding devices.</div>
+{% endif %}
+
+{% if session and session.status == 'failed' and session.error_message %}
+<div class="alert alert-danger">Scan failed: {{ session.error_message }}</div>
+{% endif %}
+{% if session and session.status == 'cancelled' %}
+<div class="alert alert-info">Scan cancelled. Partial results below are still reviewable.</div>
+{% endif %}
+
+<div class="card mb-4">
+    <div class="card-header">
+        <strong>Scan</strong>
+    </div>
+    <div class="card-body">
+        <form method="post" action="/manage/discover/start" id="scanForm" autocomplete="off">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label" for="target">Target *</label>
+                    <input type="text" name="target" id="target" class="form-control"
+                           value="{{ form.get('target', '') }}"
+                           placeholder="10.50.12.10 or 10.50.12.0/24" required
+                           {% if scan_busy %}disabled{% endif %}>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="default_building">Default building</label>
+                    <select name="default_building" id="default_building" class="form-select"
+                            {% if not buildings or scan_busy %}disabled{% endif %}>
+                        <option value="">— none —</option>
+                        {% for b in buildings %}
+                        <option value="{{ b.name }}"
+                            {% if form.get('default_building') == b.name %}selected{% endif %}>
+                            {{ b.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Used only as a starting value per row. Switches on one management subnet often live in different buildings.</div>
+                </div>
+
+                <div class="col-12">
+                    <label class="form-label">Credential profiles</label>
+                    {% if profiles %}
+                    <p class="form-text mt-0">Optional. Tried in list order (use Up/Down). None selected means ping-only.</p>
+                    <ul id="profileList" class="list-group">
+                        {% set selected_ids = form.get('profile_ids') or [] %}
+                        {% for p in profiles %}
+                        <li class="list-group-item d-flex align-items-center gap-2" data-profile-id="{{ p.id }}">
+                            <input class="form-check-input profile-check flex-shrink-0" type="checkbox"
+                                   name="profile_ids" value="{{ p.id }}"
+                                   {% if p.id in selected_ids %}checked{% endif %}
+                                   {% if scan_busy %}disabled{% endif %}>
+                            <span class="flex-grow-1">{{ p.name }} <span class="text-muted">({{ p.snmp_version }})</span></span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary profile-up" {% if scan_busy %}disabled{% endif %}>Up</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary profile-down" {% if scan_busy %}disabled{% endif %}>Down</button>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted mb-0">No credential profiles. Scan will be ping-only.</p>
+                    {% endif %}
+                </div>
+
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="confirm_public" value="1"
+                               id="confirm_public"
+                               {% if form.get('confirm_public') %}checked{% endif %}
+                               {% if require_public %}required{% endif %}
+                               {% if scan_busy %}disabled{% endif %}>
+                        <label class="form-check-label" for="confirm_public">Scan public space</label>
+                    </div>
+                    <div class="form-text">Required for addresses that are not RFC1918 / private.</div>
+                </div>
+
+                {% if needs_discard %}
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="discard_previous" value="1"
+                               id="discard_previous" required
+                               {% if form.get('discard_previous') %}checked{% endif %}
+                               {% if scan_busy %}disabled{% endif %}>
+                        <label class="form-check-label" for="discard_previous">Discard the current review grid and start a new scan</label>
+                    </div>
+                    <div class="form-text">The last scan has unsaved new hosts. Saving to Devices is the only way to keep operator edits.</div>
+                </div>
+                {% endif %}
+
+                <div class="col-12">
+                    <button class="btn btn-link px-0" type="button" data-bs-toggle="collapse"
+                            data-bs-target="#scanOptions" aria-expanded="false" aria-controls="scanOptions">
+                        Scan options
+                    </button>
+                    <div class="collapse" id="scanOptions">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label class="form-label" for="ping_timeout_seconds">Ping timeout (s)</label>
+                                <input type="number" name="ping_timeout_seconds" id="ping_timeout_seconds"
+                                       class="form-control" min="1" max="3"
+                                       value="{{ form.get('ping_timeout_seconds', 1) }}"
+                                       {% if scan_busy %}disabled{% endif %}>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label" for="ping_concurrency">Ping concurrency</label>
+                                <input type="number" name="ping_concurrency" id="ping_concurrency"
+                                       class="form-control" min="1" max="64"
+                                       value="{{ form.get('ping_concurrency', 32) }}"
+                                       {% if scan_busy %}disabled{% endif %}>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label" for="snmp_timeout_seconds">SNMP timeout (s)</label>
+                                <input type="number" name="snmp_timeout_seconds" id="snmp_timeout_seconds"
+                                       class="form-control" min="1" max="5"
+                                       value="{{ form.get('snmp_timeout_seconds', 2) }}"
+                                       {% if scan_busy %}disabled{% endif %}>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label" for="snmp_concurrency">SNMP concurrency</label>
+                                <input type="number" name="snmp_concurrency" id="snmp_concurrency"
+                                       class="form-control" min="1" max="16"
+                                       value="{{ form.get('snmp_concurrency', 8) }}"
+                                       {% if scan_busy %}disabled{% endif %}>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary" {% if not buildings or scan_busy %}disabled{% endif %}>
+                    Start scan
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if session and session.status in ('running', 'cancelling') %}
+<div class="card mb-4" id="scanProgress"
+     data-status="{{ session.status }}"
+     data-scan-id="{{ session.id }}">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Scan progress</strong>
+        <form method="post" action="/manage/discover/cancel" class="mb-0">
+            <input type="hidden" name="scan_id" value="{{ session.id }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger">Cancel</button>
+        </form>
+    </div>
+    <div class="card-body">
+        <div class="mb-2">
+            <span class="text-muted">Target</span> {{ session.target }}
+            {% if session.status == 'cancelling' %}
+            <span class="badge bg-warning text-dark ms-2">cancelling</span>
+            {% else %}
+            <span class="badge bg-primary ms-2">running</span>
+            {% endif %}
+        </div>
+        <div class="progress mb-3" style="height: 1.25rem;">
+            <div id="scanProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width: {{ progress_pct }}%;">{{ progress_pct }}%</div>
+        </div>
+        <div class="row text-muted">
+            <div class="col-md-3">Pinged: <span id="pingedCount">{{ progress.pinged_count }}</span> / <span id="totalHosts">{{ progress.total_hosts }}</span></div>
+            <div class="col-md-3">Live: <span id="liveCount">{{ progress.live_count }}</span></div>
+            <div class="col-md-3">SNMP done: <span id="snmpDoneCount">{{ progress.snmp_done_count }}</span></div>
+            <div class="col-md-3">Elapsed: <span id="elapsedLabel">{{ progress.elapsed_seconds }}s</span></div>
+        </div>
+        <div id="scanLongWarning" class="alert alert-warning mt-3 mb-0 {% if progress.elapsed_seconds < 900 %}d-none{% endif %}">
+            This scan has been running more than 15 minutes. You can Cancel if it is stuck.
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if results %}
+<div class="card mb-4">
+    <div class="card-header">
+        <strong>Review ({{ results|length }})</strong>
+    </div>
+    <div class="card-body p-0">
+        <form method="post" action="/manage/discover/save" id="saveForm">
+            <input type="hidden" name="scan_id" value="{{ session.id }}">
+            <div class="table-responsive">
+                <table class="table table-hover table-sm align-middle mb-0" id="reviewTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th>
+                                <input type="checkbox" class="form-check-input" id="selectAllNew"
+                                       title="Select all new"
+                                       {% if scan_busy or not buildings %}disabled{% endif %}>
+                            </th>
+                            <th>IP</th>
+                            <th>Status</th>
+                            <th>Reachability</th>
+                            <th>Name</th>
+                            <th>Location</th>
+                            <th>Vendor</th>
+                            <th>Model</th>
+                            <th>Building</th>
+                            <th>Comment</th>
+                            <th>Asset tag</th>
+                            <th>Monitored</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in results %}
+                        <tr class="{% if r.already_managed %}table-secondary{% endif %}">
+                            <td>
+                                <input type="checkbox" class="form-check-input add-row" name="selected"
+                                       value="{{ r.id }}"
+                                       {% if r.selected %}checked{% endif %}
+                                       {% if not r.addable or scan_busy or not buildings %}disabled{% endif %}>
+                            </td>
+                            <td class="text-nowrap">{{ r.ip_address }}</td>
+                            <td class="text-nowrap">
+                                {% if r.already_managed %}
+                                <span class="badge bg-info text-dark">Already in inventory</span>
+                                {% else %}
+                                <span class="badge bg-primary">New</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-nowrap">
+                                {% if r.ping_ok and r.ping_rtt_ms is not none %}
+                                    {{ '%.1f'|format(r.ping_rtt_ms) }} ms
+                                {% elif r.ping_ok %}
+                                    up
+                                {% else %}
+                                    down
+                                {% endif %}
+                                {% if r.snmp_status == 'ok' %}
+                                    <span class="badge bg-success">ok</span>
+                                {% elif r.snmp_status == 'auth_fail' %}
+                                    <span class="badge bg-warning text-dark">auth fail</span>
+                                {% elif r.snmp_status == 'no_snmp' %}
+                                    <span class="badge bg-secondary">no SNMP</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">skipped</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="text" name="name_{{ r.id }}" class="form-control form-control-sm"
+                                       value="{{ r.name }}" maxlength="100"
+                                       {% if not r.addable or scan_busy %}disabled{% endif %}>
+                            </td>
+                            <td>
+                                <input type="text" name="location_{{ r.id }}" class="form-control form-control-sm"
+                                       value="{{ r.location }}" maxlength="100"
+                                       {% if not r.addable or scan_busy %}disabled{% endif %}>
+                            </td>
+                            <td class="text-nowrap">{{ r.vendor or "—" }}</td>
+                            <td class="text-nowrap">{{ r.model or "—" }}</td>
+                            <td>
+                                <select name="building_{{ r.id }}" class="form-select form-select-sm"
+                                        {% if not r.addable or scan_busy or not buildings %}disabled{% endif %}>
+                                    <option value="">—</option>
+                                    {% for b in buildings %}
+                                    <option value="{{ b.name }}" {% if r.building == b.name %}selected{% endif %}>
+                                        {{ b.name }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td>
+                                <input type="text" name="comment_{{ r.id }}" class="form-control form-control-sm"
+                                       value="{{ r.comment }}" maxlength="500"
+                                       {% if not r.addable or scan_busy %}disabled{% endif %}>
+                            </td>
+                            <td>
+                                <input type="text" name="asset_tag_{{ r.id }}" class="form-control form-control-sm"
+                                       value="{{ r.asset_tag }}" maxlength="50"
+                                       {% if not r.addable or scan_busy %}disabled{% endif %}>
+                            </td>
+                            <td class="text-center">
+                                <input type="checkbox" class="form-check-input" name="monitored_{{ r.id }}"
+                                       value="true"
+                                       {% if r.monitored %}checked{% endif %}
+                                       {% if not r.addable or scan_busy %}disabled{% endif %}>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="p-3 border-top">
+                <button type="submit" class="btn btn-primary"
+                        {% if not buildings or scan_busy %}disabled{% endif %}>
+                    Save selected
+                </button>
+                <div class="form-text mt-2">
+                    Save selected writes to Devices; reloading this page resets the grid to scan results.
+                    {% if scan_busy %} Wait for the scan to finish before saving.{% endif %}
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% elif session and session.status in ('completed', 'cancelled', 'failed') %}
+<div class="card mb-4">
+    <div class="card-body text-muted">
+        No hosts to review. Unmanaged addresses that did not respond to ping are omitted.
+    </div>
+</div>
+{% endif %}
+
+<div class="mt-4 pt-3 border-top">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <small class="text-muted">
+                INfoRM v{{ app_version }}
+            </small>
+        </div>
+        <div>
+            <span class="badge bg-secondary">End of List</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    const list = document.getElementById('profileList');
+    if (list) {
+        list.addEventListener('click', function(ev) {
+            const up = ev.target.closest('.profile-up');
+            const down = ev.target.closest('.profile-down');
+            if (!up && !down) return;
+            const li = ev.target.closest('li');
+            if (!li) return;
+            if (up && li.previousElementSibling) {
+                list.insertBefore(li, li.previousElementSibling);
+            } else if (down && li.nextElementSibling) {
+                list.insertBefore(li.nextElementSibling, li);
+            }
+        });
+    }
+
+    const selectAll = document.getElementById('selectAllNew');
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            document.querySelectorAll('.add-row:not(:disabled)').forEach(function(cb) {
+                cb.checked = selectAll.checked;
+            });
+        });
+    }
+
+    const progress = document.getElementById('scanProgress');
+    if (!progress) return;
+
+    const TERMINAL = {completed: true, cancelled: true, failed: true};
+    let lastStatus = progress.dataset.status || '';
+    const scanId = progress.dataset.scanId;
+
+    function formatElapsed(seconds) {
+        seconds = Math.max(0, parseInt(seconds, 10) || 0);
+        if (seconds < 60) return seconds + 's';
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return m + 'm ' + s + 's';
+    }
+
+    function pct(data) {
+        const total = data.total_hosts || 0;
+        if (!total) return 0;
+        const pinged = data.pinged_count || 0;
+        const live = data.live_count || 0;
+        const snmpDone = data.snmp_done_count || 0;
+        let frac = Math.min(pinged, total) / total;
+        if (pinged >= total && live > 0) {
+            frac = 0.5 * frac + 0.5 * Math.min(snmpDone, live) / live;
+        }
+        return Math.max(0, Math.min(100, Math.round(frac * 100)));
+    }
+
+    function apply(data) {
+        const bar = document.getElementById('scanProgressBar');
+        const p = pct(data);
+        if (bar) {
+            bar.style.width = p + '%';
+            bar.textContent = p + '%';
+        }
+        const pinged = document.getElementById('pingedCount');
+        const total = document.getElementById('totalHosts');
+        const live = document.getElementById('liveCount');
+        const snmp = document.getElementById('snmpDoneCount');
+        const elapsed = document.getElementById('elapsedLabel');
+        if (pinged) pinged.textContent = data.pinged_count;
+        if (total) total.textContent = data.total_hosts;
+        if (live) live.textContent = data.live_count;
+        if (snmp) snmp.textContent = data.snmp_done_count;
+        if (elapsed) elapsed.textContent = formatElapsed(data.elapsed_seconds);
+        const warn = document.getElementById('scanLongWarning');
+        if (warn) {
+            warn.classList.toggle('d-none', !(data.elapsed_seconds >= 900));
+        }
+    }
+
+    async function poll() {
+        const url = scanId ? '/manage/discover/status?scan=' + encodeURIComponent(scanId)
+                           : '/manage/discover/status';
+        const res = await fetch(url, {headers: {'Accept': 'application/json'}});
+        if (!res.ok) return;
+        const data = await res.json();
+        apply(data);
+        if (TERMINAL[data.status] && !TERMINAL[lastStatus]) {
+            window.location.reload();
+            return;
+        }
+        lastStatus = data.status;
+    }
+
+    if (lastStatus === 'running' || lastStatus === 'cancelling') {
+        poll();
+        setInterval(poll, 1000);
+    }
+})();
+</script>
+{% endblock %}

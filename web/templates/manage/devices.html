@@ -74,6 +74,18 @@
                     <input type="text" name="location" class="form-control"
                            value="{{ edit_device.location if edit_device else '' }}">
                 </div>
+                <div class="col-md-4">
+                    <label class="form-label">Credential profile</label>
+                    <select name="credential_profile_id" class="form-select">
+                        <option value="">— none —</option>
+                        {% for p in profiles %}
+                        <option value="{{ p.id }}"
+                            {% if edit_device and edit_device.credential_profile_id == p.id %}selected{% endif %}>
+                            {{ p.name }} ({{ p.snmp_version }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <div class="col-md-12">
                     <label class="form-label">Comment / Description</label>
                     <textarea name="comment" class="form-control" rows="2"

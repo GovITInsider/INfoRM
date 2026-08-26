@@ -4,6 +4,7 @@ from sqlalchemy.exc import SAWarning
 # Suppress the "declarative base already contains" warning
 warnings.filterwarnings("ignore", category=SAWarning)
 
+import asyncio
 import typer
 from rich import print as rprint
 from rich.table import Table
@@ -11,10 +12,12 @@ from rich.console import Console
 from sqlalchemy.orm import Session
 
 from inform.core.database import SessionLocal
-from inform.core.models import CredentialProfile, Device
+from inform.core.models import Building, CredentialProfile, Device
 from inform.core.config import settings
+from inform.core.secrets import encrypt_secret
 from inform.snmp.client import get_device_info
-from inform.core.models import CredentialProfile, Device, Building
+from inform.snmp.scan import clamp_scan_options, probe_hosts
+from inform.snmp.targets import TargetParseError, parse_scan_target
 
 
 
@@ -65,17 +68,85 @@ def status():
 # Credential Profile Commands
 # ============================================================
 
+def _prompt_secret(label: str, current: str | None) -> str:
+    if current:
+        return current
+    return typer.prompt(label, hide_input=True)
+
+
+def _normalize_security_level(raw: str) -> str | None:
+    key = (raw or "authPriv").replace(" ", "").lower()
+    mapping = {
+        "authpriv": "authPriv",
+        "authnopriv": "authNoPriv",
+        "noauthnopriv": "noAuthNoPriv",
+    }
+    return mapping.get(key)
+
+
 @app.command()
 def add_profile(
     name: str = typer.Option(..., prompt=True, help="Profile name (e.g. cisco, f5)"),
     description: str = typer.Option("", prompt=True, help="Optional description"),
-    username: str = typer.Option(..., prompt=True, help="SNMPv3 username"),
-    auth_protocol: str = typer.Option("sha", prompt=True, help="Auth protocol (sha, md5, none)"),
-    auth_key: str = typer.Option(..., prompt=True, hide_input=True, help="Authentication key"),
-    priv_protocol: str = typer.Option("aes", prompt=True, help="Privacy protocol (aes, des, none)"),
-    priv_key: str = typer.Option(..., prompt=True, hide_input=True, help="Privacy key"),
+    version: str = typer.Option("v3", "--version", help="SNMP version: v1, v2c, or v3"),
+    community: str = typer.Option(None, "--community", hide_input=True, help="Community string (v1/v2c)"),
+    security_level: str = typer.Option("authPriv", "--security-level", help="v3 security level"),
+    username: str = typer.Option(None, "--username", "-u", help="SNMPv3 username"),
+    auth_protocol: str = typer.Option(None, "--auth-protocol", help="Auth protocol (sha, md5, sha256)"),
+    auth_key: str = typer.Option(None, "--auth-key", hide_input=True, help="Authentication key"),
+    priv_protocol: str = typer.Option(None, "--priv-protocol", help="Privacy protocol (aes, des)"),
+    priv_key: str = typer.Option(None, "--priv-key", hide_input=True, help="Privacy key"),
 ):
-    """Add a new SNMPv3 credential profile"""
+    """Add a new SNMP credential profile (v1 / v2c / v3)."""
+    version = (version or "v3").lower().strip()
+    if version not in ("v1", "v2c", "v3"):
+        rprint("[red]Error:[/red] --version must be v1, v2c, or v3.")
+        return
+
+    stored_community = None
+    stored_username = ""
+    stored_auth_protocol = ""
+    stored_auth_key = ""
+    stored_priv_protocol = ""
+    stored_priv_key = ""
+    stored_level = ""
+
+    if version in ("v1", "v2c"):
+        community = _prompt_secret("Community", community)
+        if not community:
+            rprint("[red]Error:[/red] --community is required for v1/v2c profiles.")
+            return
+        stored_community = encrypt_secret(community)
+    else:
+        stored_level = _normalize_security_level(security_level)
+        if stored_level is None:
+            rprint("[red]Error:[/red] --security-level must be authPriv, authNoPriv, or noAuthNoPriv.")
+            return
+        if not username:
+            username = typer.prompt("SNMPv3 username")
+        if not username:
+            rprint("[red]Error:[/red] username is required for SNMPv3.")
+            return
+        stored_username = username
+        if stored_level in ("authNoPriv", "authPriv"):
+            if not auth_protocol:
+                auth_protocol = typer.prompt("Auth protocol", default="sha")
+            stored_auth_protocol = (auth_protocol or "sha").lower()
+            auth_key = _prompt_secret("Authentication key", auth_key)
+            if not auth_key:
+                rprint("[red]Error:[/red] authentication key is required for this security level.")
+                return
+            stored_auth_key = encrypt_secret(auth_key) or ""
+        if stored_level == "authPriv":
+            if not priv_protocol:
+                priv_protocol = typer.prompt("Privacy protocol", default="aes")
+            stored_priv_protocol = (priv_protocol or "aes").lower()
+            priv_key = _prompt_secret("Privacy key", priv_key)
+            if not priv_key:
+                rprint("[red]Error:[/red] privacy key is required for authPriv.")
+                return
+            stored_priv_key = encrypt_secret(priv_key) or ""
+
     db: Session = SessionLocal()
     try:
         existing = db.query(CredentialProfile).filter(CredentialProfile.name == name).first()
@@ -86,11 +157,14 @@ def add_profile(
         profile = CredentialProfile(
             name=name,
             description=description or None,
-            username=username,
-            auth_protocol=auth_protocol.lower(),
-            auth_key=auth_key,
-            priv_protocol=priv_protocol.lower(),
-            priv_key=priv_key,
+            snmp_version=version,
+            security_level=stored_level,
+            community=stored_community,
+            username=stored_username,
+            auth_protocol=stored_auth_protocol,
+            auth_key=stored_auth_key,
+            priv_protocol=stored_priv_protocol,
+            priv_key=stored_priv_key,
         )
         db.add(profile)
         db.commit()
@@ -105,7 +179,7 @@ def add_profile(
 
 @app.command()
 def list_profiles():
-    """List all SNMPv3 credential profiles"""
+    """List credential profiles (never prints keys or community)."""
     db: Session = SessionLocal()
     try:
         profiles = db.query(CredentialProfile).all()
@@ -113,16 +187,23 @@ def list_profiles():
             rprint("[yellow]No credential profiles found.[/yellow]")
             return
 
-        table = Table(title="SNMPv3 Credential Profiles")
+        table = Table(title="Credential Profiles")
         table.add_column("ID", style="cyan")
         table.add_column("Name", style="green")
+        table.add_column("Version")
+        table.add_column("Security")
         table.add_column("Username", style="magenta")
-        table.add_column("Auth", style="yellow")
-        table.add_column("Priv", style="yellow")
         table.add_column("Description")
 
         for p in profiles:
-            table.add_row(str(p.id), p.name, p.username, p.auth_protocol, p.priv_protocol, p.description or "")
+            table.add_row(
+                str(p.id),
+                p.name,
+                p.snmp_version or "",
+                p.security_level or "",
+                p.username or "",
+                p.description or "",
+            )
         console.print(table)
     except Exception as e:
         rprint(f"[red]Error:[/red] {e}")
@@ -280,6 +361,10 @@ def show_device(
         rprint(f"{'Name:':<20} {device.name or '-'}")
         rprint(f"{'Building:':<20} {device.building or '-'}")
         rprint(f"{'Location:':<20} {device.location or '-'}")
+        rprint(f"{'Vendor:':<20} {device.vendor or '-'}")
+        rprint(f"{'Model:':<20} {device.model or '-'}")
+        profile_name = device.credential_profile.name if device.credential_profile else "-"
+        rprint(f"{'Profile:':<20} {profile_name}")
         rprint(f"{'Comment:':<20} {device.comment or '-'}")
         rprint(f"{'Status:':<20} {device.status}")
         rprint(f"{'Monitored:':<20} {'Yes' if device.monitored else 'No'}")
@@ -439,7 +524,7 @@ def snmp_test(
     ip: str = typer.Argument(..., help="IP address of the device to test"),
     profile: str = typer.Option(..., "--profile", "-p", help="Name of the SNMP credential profile"),
 ):
-    """Test SNMPv3 connection and retrieve basic device info"""
+    """Test SNMP connection and retrieve basic device info"""
     db: Session = SessionLocal()
     try:
         cred_profile = db.query(CredentialProfile).filter(CredentialProfile.name == profile).first()
@@ -447,7 +532,7 @@ def snmp_test(
             rprint(f"[red]Error:[/red] SNMP profile '{profile}' not found.")
             return
 
-        rprint(f"\n[bold]Testing SNMPv3 on[/bold] [green]{ip}[/green] using profile [cyan]{profile}[/cyan]...\n")
+        rprint(f"\n[bold]Testing SNMP on[/bold] [green]{ip}[/green] using profile [cyan]{profile}[/cyan]...\n")
 
         info = get_device_info(ip, cred_profile)
 
@@ -455,8 +540,14 @@ def snmp_test(
         table.add_column("Field", style="cyan")
         table.add_column("Value", style="green")
 
-        for key, value in info.items():
-            table.add_row(key, str(value))
+        if "error" in info:
+            table.add_row("error", str(info["error"]))
+        else:
+            table.add_row("sysName", str(info.get("sysName") or ""))
+            table.add_row("sysLocation", str(info.get("sysLocation") or ""))
+            table.add_row("vendor", str(info.get("vendor") or ""))
+            table.add_row("model", str(info.get("model") or ""))
+            table.add_row("sysObjectID", str(info.get("sysObjectID") or ""))
 
         console.print(table)
 
@@ -464,6 +555,108 @@ def snmp_test(
         rprint(f"[red]SNMP Error:[/red] {e}")
     finally:
         db.close()
+
+
+@app.command()
+def discover(
+    target: str = typer.Argument(..., help="IPv4 address or CIDR (max /24)"),
+    profile: list[str] = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="Credential profile name (repeatable, try order)",
+    ),
+    confirm_public: bool = typer.Option(
+        False,
+        "--confirm-public",
+        help="Required when the target includes public IPv4 space",
+    ),
+):
+    """Probe a subnet with ping then SNMP. Does not write inventory or scan sessions."""
+    if not settings.discovery.enabled:
+        rprint("[red]Error:[/red] Discovery is disabled.")
+        raise typer.Exit(code=1)
+
+    try:
+        parsed = parse_scan_target(target)
+    except TargetParseError as exc:
+        rprint(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    if parsed.contains_public and not confirm_public:
+        typer.echo(
+            "This address is not RFC1918. Pass --confirm-public to continue.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    profile_names = profile or []
+    ping_timeout, ping_conc, snmp_timeout, snmp_conc = clamp_scan_options()
+    db: Session = SessionLocal()
+    try:
+        profiles: list[CredentialProfile] = []
+        for name in profile_names:
+            cred = (
+                db.query(CredentialProfile)
+                .filter(CredentialProfile.name == name)
+                .first()
+            )
+            if not cred:
+                rprint(f"[red]Error:[/red] SNMP profile '{name}' not found.")
+                raise typer.Exit(code=1)
+            db.expunge(cred)
+            profiles.append(cred)
+        managed = {d.ip_address: d.id for d in db.query(Device).all()}
+    finally:
+        db.close()
+
+    hosts = [str(ip) for ip in parsed.hosts]
+    rprint(
+        f"[bold]Discover[/bold] {target} "
+        f"({len(hosts)} host{'s' if len(hosts) != 1 else ''}, "
+        f"profiles: {', '.join(profile_names) if profile_names else 'none'})"
+    )
+
+    rows = asyncio.run(
+        probe_hosts(
+            hosts,
+            profiles,
+            ping_timeout=ping_timeout,
+            ping_concurrency=ping_conc,
+            snmp_timeout=snmp_timeout,
+            snmp_concurrency=snmp_conc,
+            managed=managed,
+        )
+    )
+
+    if not rows:
+        rprint("[yellow]No live or managed hosts found.[/yellow]")
+        return
+
+    table = Table(title="Discover results")
+    table.add_column("IP", style="green")
+    table.add_column("Ping RTT")
+    table.add_column("SNMP")
+    table.add_column("Name")
+    table.add_column("Location")
+    table.add_column("Vendor")
+    table.add_column("Model")
+    table.add_column("Already managed")
+
+    for row in rows:
+        rtt = row.get("ping_rtt_ms")
+        rtt_text = f"{rtt:.1f} ms" if rtt is not None else "-"
+        table.add_row(
+            row["ip"],
+            rtt_text,
+            str(row.get("snmp_status") or ""),
+            row.get("name") or "-",
+            row.get("location") or "-",
+            row.get("vendor") or "-",
+            row.get("model") or "-",
+            "yes" if row.get("already_managed") else "no",
+        )
+    console.print(table)
 
 # ============================================================
 # Building Management Commands
