@@ -102,7 +102,7 @@ def migrate_schema() -> None:
         ))
         conn.execute(text(
             "UPDATE credential_profiles SET security_level = 'authPriv' "
-            "WHERE security_level IS NULL OR security_level = ''"
+            "WHERE security_level IS NULL"
         ))
 
 
@@ -110,6 +110,7 @@ def ensure_schema() -> None:
     from inform.core import models as _models  # noqa: F401 — register metadata
     Base.metadata.create_all(bind=engine)
     migrate_schema()
+    ensure_db_permissions()
 
 
 def init_db():
