@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -120,6 +121,39 @@ def _public_profile(profile, device_count=0):
         "priv_key_set": bool(profile.priv_key),
         "device_count": device_count,
     }
+
+
+def _device_form_profiles(db):
+    """id/name/version only — no secret columns in the device-form template context."""
+    rows = (
+        db.query(
+            CredentialProfile.id,
+            CredentialProfile.name,
+            CredentialProfile.snmp_version,
+        )
+        .order_by(CredentialProfile.name)
+        .all()
+    )
+    return [
+        {"id": row.id, "name": row.name, "snmp_version": row.snmp_version or "v3"}
+        for row in rows
+    ]
+
+
+def _detached_snmp_profile(profile):
+    """Copy identify()/auth_from_profile columns so the DB session can close first."""
+    return SimpleNamespace(
+        id=profile.id,
+        name=profile.name,
+        snmp_version=profile.snmp_version,
+        security_level=profile.security_level or "",
+        community=profile.community,
+        username=profile.username or "",
+        auth_protocol=profile.auth_protocol or "",
+        auth_key=profile.auth_key or "",
+        priv_protocol=profile.priv_protocol or "",
+        priv_key=profile.priv_key or "",
+    )
 
 
 def _form_from_public(pub):
@@ -764,64 +798,73 @@ async def test_profile(
             html = _render_profiles_page(request, db, error=str(exc))
             return HTMLResponse(content=html)
 
-        timeout = float(settings.discovery.default_snmp_timeout_seconds)
-        engine = SnmpEngine()
-        try:
-            identity, err, _ = await identify(
-                engine, test_ip, [profile], timeout, retries=1,
-            )
-        except Exception as exc:
-            logger.error(
-                "SNMP profile test failed for %s profile %s: %s",
-                test_ip,
-                profile.name,
-                type(exc).__name__,
-            )
-            identity, err = None, SnmpErrorKind.OTHER
-        finally:
-            engine.close_dispatcher()
+        snmp_profile = _detached_snmp_profile(profile)
+        profile_name = profile.name
+    finally:
+        db.rollback()
+        db.close()
 
-        if identity is not None:
-            result = {
-                "ok": True,
-                "ip": test_ip,
-                "profile_name": profile.name,
-                "sys_name": identity.sys_name,
-                "sys_location": identity.sys_location,
-                "vendor": identity.vendor,
-                "model": identity.model,
-                "sys_object_id": identity.sys_object_id,
-            }
-            logger.info(
-                "SNMP profile test user=%s profile=%s ip=%s result=ok",
-                getattr(user, "username", None),
-                profile.name,
-                test_ip,
-            )
+    timeout = float(settings.discovery.default_snmp_timeout_seconds)
+    engine = SnmpEngine()
+    try:
+        identity, err, _ = await identify(
+            engine, test_ip, [snmp_profile], timeout, retries=1,
+        )
+    except Exception as exc:
+        logger.error(
+            "SNMP profile test failed for %s profile %s: %s",
+            test_ip,
+            profile_name,
+            type(exc).__name__,
+        )
+        identity, err = None, SnmpErrorKind.OTHER
+    finally:
+        engine.close_dispatcher()
+
+    if identity is not None:
+        result = {
+            "ok": True,
+            "ip": test_ip,
+            "profile_name": profile_name,
+            "sys_name": identity.sys_name,
+            "sys_location": identity.sys_location,
+            "vendor": identity.vendor,
+            "model": identity.model,
+            "sys_object_id": identity.sys_object_id,
+        }
+        logger.info(
+            "SNMP profile test user=%s profile=%s ip=%s result=ok",
+            getattr(user, "username", None),
+            profile_name,
+            test_ip,
+        )
+    else:
+        if err == SnmpErrorKind.TIMEOUT:
+            err_label = "timeout"
+        elif err == SnmpErrorKind.AUTH:
+            err_label = "auth fail"
         else:
-            if err == SnmpErrorKind.TIMEOUT:
-                err_label = "timeout"
-            elif err == SnmpErrorKind.AUTH:
-                err_label = "auth fail"
-            else:
-                err_label = "failed"
-            result = {
-                "ok": False,
-                "ip": test_ip,
-                "profile_name": profile.name,
-                "error": err_label,
-            }
-            logger.info(
-                "SNMP profile test user=%s profile=%s ip=%s result=%s",
-                getattr(user, "username", None),
-                profile.name,
-                test_ip,
-                err_label,
-            )
+            err_label = "failed"
+        result = {
+            "ok": False,
+            "ip": test_ip,
+            "profile_name": profile_name,
+            "error": err_label,
+        }
+        logger.info(
+            "SNMP profile test user=%s profile=%s ip=%s result=%s",
+            getattr(user, "username", None),
+            profile_name,
+            test_ip,
+            err_label,
+        )
 
+    db = SessionLocal()
+    try:
         html = _render_profiles_page(request, db, test_result=result)
         return HTMLResponse(content=html)
     finally:
+        db.rollback()
         db.close()
 
 # ========================
@@ -834,7 +877,7 @@ async def manage_devices(request: Request, edit: int = None, user=Depends(manage
     try:
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
-        profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
+        profiles = _device_form_profiles(db)
         edit_device = db.query(Device).filter(Device.id == edit).first() if edit else None
 
         return templates.get_template("manage/devices.html").render(
@@ -880,7 +923,7 @@ async def save_device(
             if not cred:
                 devices = db.query(Device).order_by(Device.ip_address).all()
                 buildings = db.query(Building).order_by(Building.name).all()
-                profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
+                profiles = _device_form_profiles(db)
                 return templates.get_template("manage/devices.html").render(
                     request=request,
                     devices=devices,
@@ -908,7 +951,7 @@ async def save_device(
             if existing:
                 devices = db.query(Device).order_by(Device.ip_address).all()
                 buildings = db.query(Building).order_by(Building.name).all()
-                profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
+                profiles = _device_form_profiles(db)
                 return templates.get_template("manage/devices.html").render(
                     request=request,
                     devices=devices,
@@ -935,7 +978,7 @@ async def save_device(
         db.rollback()
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
-        profiles = db.query(CredentialProfile).order_by(CredentialProfile.name).all()
+        profiles = _device_form_profiles(db)
         html = templates.get_template("manage/devices.html").render(
             request=request,
             devices=devices,
