@@ -307,6 +307,8 @@ def list_devices(
         table.add_column("Name")
         table.add_column("Building")
         table.add_column("Location")
+        table.add_column("Vendor")
+        table.add_column("Model")
         table.add_column("Comment")
         table.add_column("Status")
         table.add_column("Monitored")
@@ -324,6 +326,8 @@ def list_devices(
                 d.name or "-",
                 d.building or "-",
                 d.location or "-",
+                d.vendor or "-",
+                d.model or "-",
                 d.comment or "-",
                 f"[{status_color}]{d.status}[/{status_color}]",
                 "Yes" if d.monitored else "No",
