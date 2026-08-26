@@ -7,10 +7,9 @@ from datetime import datetime
 from icmplib import ping
 from sqlalchemy.orm import Session
 
-from inform.core.database import SessionLocal
+from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
 from inform.core.models import Device, AlarmEvent
 from inform.core.config import settings
-from inform.core.database import ensure_db_permissions
 
 # Ensure database has correct permissions on startup
 ensure_db_permissions()
@@ -163,6 +162,7 @@ def run_monitoring_cycle():
 
 def main():
     logger.info("INfoRM Monitor started")
+    ensure_schema()
 
     while not shutdown_requested:
         try:

@@ -4,6 +4,14 @@ general:
 
 discovery:
   enabled: true
+  max_prefix_len: 24          # reject larger networks (/23, /16, …)
+  default_ping_timeout_seconds: 1
+  default_ping_concurrency: 32
+  default_snmp_timeout_seconds: 2
+  default_snmp_concurrency: 8
+  max_ping_concurrency: 64
+  max_snmp_concurrency: 16
+  scan_max_runtime_seconds: 900   # watchdog fails a stuck running session
 
 logging:
   log_file: logs/inform.log
