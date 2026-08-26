@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
+from urllib.parse import urlencode
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -584,6 +585,28 @@ def _render_discover_page(
         progress=payload,
         progress_pct=_progress_pct(payload),
     )
+
+
+def _devices_redirect(*, edit=None, success=None, error=None):
+    params = {}
+    if edit is not None:
+        params["edit"] = str(edit)
+    if success:
+        params["success"] = success
+    if error:
+        params["error"] = error
+    url = "/manage/devices"
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    return RedirectResponse(url=url, status_code=302)
+
+
+def _snmp_refresh_error_label(err):
+    if err == SnmpErrorKind.TIMEOUT:
+        return "timeout"
+    if err == SnmpErrorKind.AUTH:
+        return "auth"
+    return "no SNMP"
 
 
 # ========================
@@ -1251,6 +1274,123 @@ async def save_device(
         return HTMLResponse(content=html, status_code=200)
     finally:
         db.close()
+
+
+@app.post("/manage/devices/{device_id}/refresh-snmp")
+async def refresh_device_snmp(
+    device_id: int,
+    refresh_profile_id: str = Form(""),
+    try_all: bool = Form(False),
+    update_name: bool = Form(False),
+    user=Depends(manager),
+):
+    db = SessionLocal()
+    ip = None
+    profiles_to_try = []
+    load_error = None
+    try:
+        device = db.query(Device).filter(Device.id == device_id).first()
+        if not device:
+            load_error = "Device not found."
+        else:
+            ip = device.ip_address
+            linked_id = device.credential_profile_id
+            if linked_id:
+                # Linked profile only — never walk others unless the operator unsets it.
+                row = db.query(CredentialProfile).filter(
+                    CredentialProfile.id == linked_id
+                ).first()
+                if row:
+                    profiles_to_try = [_detached_snmp_profile(row)]
+                else:
+                    load_error = "SNMP refresh failed: no SNMP"
+            else:
+                rows = (
+                    db.query(CredentialProfile)
+                    .order_by(CredentialProfile.name)
+                    .all()
+                )
+                if try_all:
+                    profiles_to_try = [_detached_snmp_profile(p) for p in rows]
+                else:
+                    chosen_id = _optional_int(refresh_profile_id)
+                    if chosen_id is None and rows:
+                        chosen_id = rows[0].id
+                    row = next((p for p in rows if p.id == chosen_id), None)
+                    if row:
+                        profiles_to_try = [_detached_snmp_profile(row)]
+                if not profiles_to_try:
+                    load_error = "SNMP refresh failed: no SNMP"
+    finally:
+        db.rollback()
+        db.close()
+
+    if load_error or not profiles_to_try or not ip:
+        return _devices_redirect(
+            edit=device_id if ip else None,
+            error=load_error or "SNMP refresh failed: no SNMP",
+        )
+
+    timeout = float(settings.discovery.default_snmp_timeout_seconds)
+    engine = SnmpEngine()
+    try:
+        identity, err, _ = await identify(
+            engine, ip, profiles_to_try, timeout, retries=1,
+        )
+    except Exception as exc:
+        logger.error(
+            "SNMP refresh failed for %s device %s: %s",
+            ip,
+            device_id,
+            type(exc).__name__,
+        )
+        identity, err = None, SnmpErrorKind.OTHER
+    finally:
+        engine.close_dispatcher()
+
+    if identity is None:
+        err_label = _snmp_refresh_error_label(err)
+        logger.info(
+            "SNMP refresh user=%s device=%s ip=%s result=%s",
+            getattr(user, "username", None),
+            device_id,
+            ip,
+            err_label,
+        )
+        return _devices_redirect(
+            edit=device_id,
+            error=f"SNMP refresh failed: {err_label}",
+        )
+
+    db = SessionLocal()
+    try:
+        device = db.query(Device).filter(Device.id == device_id).first()
+        if not device:
+            return _devices_redirect(error="Device not found.")
+        device.location = identity.sys_location
+        device.vendor = identity.vendor
+        device.model = identity.model
+        device.sys_object_id = identity.sys_object_id
+        device.credential_profile_id = identity.profile_id
+        if update_name:
+            device.name = identity.sys_name
+        db.commit()
+        logger.info(
+            "SNMP refresh user=%s device=%s ip=%s result=ok",
+            getattr(user, "username", None),
+            device_id,
+            ip,
+        )
+        return _devices_redirect(edit=device_id, success="SNMP identity refreshed")
+    except Exception:
+        db.rollback()
+        return _devices_redirect(
+            edit=device_id,
+            error="SNMP refresh failed: no SNMP",
+        )
+    finally:
+        db.close()
+
 
 @app.get("/manage/devices/{device_id}/delete")
 async def delete_device(device_id: int, user=Depends(manager)):

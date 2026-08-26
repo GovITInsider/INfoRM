@@ -29,7 +29,7 @@
 </style>
 
 <div class="mb-3">
-    <input type="text" id="searchInput" class="form-control" placeholder="Search devices (IP, Name, Asset Tag, Building, Location, Comment)...">
+    <input type="text" id="searchInput" class="form-control" placeholder="Search devices (IP, Name, Asset Tag, Building, Location, Vendor, Model, Comment)...">
 </div>
 
 <div class="card mb-4">
@@ -86,6 +86,14 @@
                         {% endfor %}
                     </select>
                 </div>
+                <div class="col-md-4">
+                    <label class="form-label">Vendor</label>
+                    <p class="form-control-plaintext mb-0">{{ edit_device.vendor if edit_device and edit_device.vendor else "—" }}</p>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Model</label>
+                    <p class="form-control-plaintext mb-0">{{ edit_device.model if edit_device and edit_device.model else "—" }}</p>
+                </div>
                 <div class="col-md-12">
                     <label class="form-label">Comment / Description</label>
                     <textarea name="comment" class="form-control" rows="2"
@@ -109,6 +117,43 @@
                 {% endif %}
             </div>
         </form>
+        {% if edit_device %}
+        <hr>
+        <form method="post" action="/manage/devices/{{ edit_device.id }}/refresh-snmp">
+            <p class="mb-2"><strong>Refresh from SNMP</strong></p>
+            <p class="form-text mt-0">Overwrites location, vendor, and model from the device. Comment, building, asset tag, and monitored are never changed.</p>
+            <div class="row g-3 align-items-end">
+                {% if not edit_device.credential_profile_id %}
+                <div class="col-md-4">
+                    <label class="form-label">Credential profile</label>
+                    <select name="refresh_profile_id" class="form-select" {% if not profiles %}disabled{% endif %}>
+                        {% for p in profiles %}
+                        <option value="{{ p.id }}">{{ p.name }} ({{ p.snmp_version }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" name="try_all" value="true" id="tryAllProfiles">
+                        <label class="form-check-label" for="tryAllProfiles">Try all profiles</label>
+                    </div>
+                </div>
+                {% endif %}
+                <div class="col-md-4 d-flex align-items-end">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" name="update_name" value="true" id="updateNameFromSnmp">
+                        <label class="form-check-label" for="updateNameFromSnmp">Also update name from sysName</label>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-outline-primary"
+                            {% if not edit_device.credential_profile_id and not profiles %}disabled{% endif %}>
+                        Refresh from SNMP
+                    </button>
+                </div>
+            </div>
+        </form>
+        {% endif %}
     </div>
 </div>
 
@@ -127,9 +172,11 @@
                         <th class="sortable text-nowrap" onclick="sortTable(2)" style="cursor: pointer;">Name <span class="sort-arrow"></span></th>
                         <th class="sortable text-nowrap" onclick="sortTable(3)" style="cursor: pointer;">Building <span class="sort-arrow"></span></th>
                         <th class="sortable" onclick="sortTable(4)" style="cursor: pointer;">Location <span class="sort-arrow"></span></th>
-                        <th class="sortable" onclick="sortTable(5)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
-                        <th class="sortable" onclick="sortTable(6)" style="cursor: pointer;">Status <span class="sort-arrow"></span></th>
-                        <th class="sortable" onclick="sortTable(7)" style="cursor: pointer;">Monitored <span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortTable(5)" style="cursor: pointer;">Vendor <span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortTable(6)" style="cursor: pointer;">Model <span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortTable(7)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortTable(8)" style="cursor: pointer;">Status <span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortTable(9)" style="cursor: pointer;">Monitored <span class="sort-arrow"></span></th>
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -140,6 +187,8 @@
                         data-name="{{ device.name or '' }}"
                         data-building="{{ device.building or '' }}"
                         data-location="{{ device.location or '' }}"
+                        data-vendor="{{ device.vendor or '' }}"
+                        data-model="{{ device.model or '' }}"
                         data-ip="{{ device.ip_address }}">
                         <td style="max-width: 140px;" title="{{ device.asset_tag or '' }}">
                             {% if device.asset_tag %}
@@ -152,6 +201,8 @@
                         <td class="text-nowrap">{{ device.name or '-' }}</td>
                         <td class="text-nowrap">{{ device.building or '-' }}</td>
                         <td>{{ device.location or '-' }}</td>
+                        <td class="text-nowrap">{{ device.vendor or '-' }}</td>
+                        <td class="text-nowrap">{{ device.model or '-' }}</td>
                         <td style="max-width: 180px;" title="{{ device.comment or '' }}">
                             {% if device.comment %}
                                 {{ device.comment[:20] }}{% if device.comment|length > 20 %}…{% endif %}
@@ -224,6 +275,8 @@ document.getElementById('searchInput').addEventListener('keyup', function() {
             (row.dataset.name || '') + ' ' +
             (row.dataset.building || '') + ' ' +
             (row.dataset.location || '') + ' ' +
+            (row.dataset.vendor || '') + ' ' +
+            (row.dataset.model || '') + ' ' +
             (row.dataset.ip || '')
         ).toLowerCase();
 
@@ -260,11 +313,11 @@ function sortTable(columnIndex) {
         let valA = a.cells[columnIndex].textContent.trim().toLowerCase();
         let valB = b.cells[columnIndex].textContent.trim().toLowerCase();
 
-        if (columnIndex === 6) {
+        if (columnIndex === 8) {
             const statusOrder = { 'down': 0, 'pre-alarm': 1, 'unknown': 2, 'up': 3 };
             valA = statusOrder[valA] !== undefined ? statusOrder[valA] : 99;
             valB = statusOrder[valB] !== undefined ? statusOrder[valB] : 99;
-        } else if (columnIndex === 7) {
+        } else if (columnIndex === 9) {
             valA = valA === 'yes' ? 0 : 1;
             valB = valB === 'yes' ? 0 : 1;
         }
