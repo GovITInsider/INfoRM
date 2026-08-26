@@ -20,6 +20,11 @@
                 <li class="nav-item">
                     <a class="nav-link {% if request.url.path == '/manage/devices' %}active{% endif %}" href="/manage/devices">Devices</a>
                 </li>
+                {% if discovery_enabled %}
+                <li class="nav-item">
+                    <a class="nav-link {% if request.url.path.startswith('/manage/discover') %}active{% endif %}" href="/manage/discover">Discover</a>
+                </li>
+                {% endif %}
                 <li class="nav-item">
                     <a class="nav-link {% if request.url.path.startswith('/manage/profiles') %}active{% endif %}" href="/manage/profiles">Profiles</a>
                 </li>

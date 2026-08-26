@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from types import SimpleNamespace
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
@@ -8,8 +9,27 @@ from jinja2 import Environment, FileSystemLoader
 from collections import defaultdict
 
 from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
-from inform.snmp.scan import cancel_current_scan, fail_interrupted_sessions
-from inform.core.models import Device, Building, AlarmEvent, CredentialProfile, DiscoveryJob, ScanResult
+from inform.snmp.scan import (
+    cancel_current_scan,
+    fail_interrupted_sessions,
+    begin_scan,
+    start_scan_task,
+    request_cancel,
+    ScanAlreadyRunning,
+    UnsavedReviewError,
+    PublicSpaceError,
+    DiscoveryDisabledError,
+    clamp_scan_options,
+)
+from inform.core.models import (
+    Device,
+    Building,
+    AlarmEvent,
+    CredentialProfile,
+    DiscoveryJob,
+    ScanResult,
+    ScanSession,
+)
 from inform.core.config import settings
 from inform.core.auth import (
     manager,
@@ -28,7 +48,8 @@ from inform.snmp.client import SnmpEngine, SnmpErrorKind, identify
 from inform.snmp.targets import TargetParseError, parse_scan_target
 
 from starlette.responses import RedirectResponse
-from sqlalchemy import func, text
+from sqlalchemy import exists, func, text
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger("inform.web")
 
@@ -74,6 +95,7 @@ templates = Environment(
     auto_reload=True
 )
 templates.globals["app_version"] = __version__
+templates.globals["discovery_enabled"] = settings.discovery.enabled
 
 # enable url_for in templates
 templates.globals["url_for"] = app.url_path_for
@@ -325,6 +347,243 @@ def _optional_int(raw):
         return int(text)
     except (TypeError, ValueError):
         return None
+
+
+def _checkbox(raw) -> bool:
+    text = ("" if raw is None else str(raw)).strip().lower()
+    return text in ("1", "true", "on", "yes")
+
+
+def _parse_id_list(values) -> list:
+    out = []
+    for raw in values or ():
+        n = _optional_int(raw)
+        if n and n > 0 and n not in out:
+            out.append(n)
+    return out
+
+
+def _iso_z(dt):
+    if dt is None:
+        return None
+    return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _form_text(form, key, default=""):
+    if form is None:
+        return default
+    val = form.get(key)
+    if val is None:
+        return default
+    return str(val)
+
+
+def _discover_form_defaults():
+    ping_t, ping_c, snmp_t, snmp_c = clamp_scan_options()
+    return {
+        "target": "",
+        "default_building": "",
+        "profile_ids": [],
+        "confirm_public": False,
+        "discard_previous": False,
+        "ping_timeout_seconds": ping_t,
+        "ping_concurrency": ping_c,
+        "snmp_timeout_seconds": snmp_t,
+        "snmp_concurrency": snmp_c,
+    }
+
+
+def _discover_disabled_redirect():
+    if not settings.discovery.enabled:
+        return RedirectResponse(url="/manage", status_code=302)
+    return None
+
+
+def _has_unsaved_review(db, session_id):
+    if not session_id:
+        return False
+    return (
+        db.query(ScanResult.id)
+        .filter(
+            ScanResult.session_id == session_id,
+            ScanResult.already_managed.is_not(True),
+            ~exists().where(Device.ip_address == ScanResult.ip_address),
+        )
+        .first()
+        is not None
+    )
+
+
+def _scan_status_payload(session):
+    if session is None:
+        return {
+            "id": None,
+            "status": "none",
+            "target": None,
+            "total_hosts": 0,
+            "pinged_count": 0,
+            "live_count": 0,
+            "snmp_done_count": 0,
+            "cancel_requested": False,
+            "error_message": None,
+            "started_at": None,
+            "elapsed_seconds": 0,
+        }
+    now = datetime.utcnow()
+    start = session.started_at
+    end = session.finished_at or now
+    elapsed = 0
+    if start is not None:
+        elapsed = max(0, int((end - start).total_seconds()))
+    return {
+        "id": session.id,
+        "status": session.status,
+        "target": session.target,
+        "total_hosts": session.total_hosts or 0,
+        "pinged_count": session.pinged_count or 0,
+        "live_count": session.live_count or 0,
+        "snmp_done_count": session.snmp_done_count or 0,
+        "cancel_requested": bool(session.cancel_requested),
+        "error_message": session.error_message,
+        "started_at": _iso_z(session.started_at),
+        "elapsed_seconds": elapsed,
+    }
+
+
+def _progress_pct(payload):
+    total = payload.get("total_hosts") or 0
+    if total <= 0:
+        return 0
+    pinged = payload.get("pinged_count") or 0
+    live = payload.get("live_count") or 0
+    snmp_done = payload.get("snmp_done_count") or 0
+    ping_frac = min(pinged, total) / total
+    if pinged >= total and live > 0:
+        frac = 0.5 * ping_frac + 0.5 * min(snmp_done, live) / live
+    else:
+        frac = ping_frac
+    return max(0, min(100, int(round(frac * 100))))
+
+
+def _ordered_profiles(profiles, selected_ids):
+    by_id = {p["id"]: p for p in profiles}
+    ordered = []
+    seen = set()
+    for pid in selected_ids or ():
+        row = by_id.get(pid)
+        if row is not None and pid not in seen:
+            ordered.append(row)
+            seen.add(pid)
+    for row in profiles:
+        if row["id"] not in seen:
+            ordered.append(row)
+    return ordered
+
+
+def _review_rows(db, session, form=None):
+    if session is None:
+        return []
+    results = (
+        db.query(ScanResult)
+        .filter(ScanResult.session_id == session.id)
+        .order_by(ScanResult.ip_address)
+        .all()
+    )
+    managed_ips = {ip for (ip,) in db.query(Device.ip_address).all()}
+    default_building = session.default_building or ""
+    selected_ids = set()
+    if form is not None:
+        selected_ids = {str(n) for n in _parse_id_list(form.getlist("selected"))}
+    rows = []
+    for r in results:
+        in_inv = bool(r.already_managed) or r.ip_address in managed_ips
+        addable = (not in_inv) and bool(r.ping_ok)
+        rid = str(r.id)
+        if form is not None:
+            name = _form_text(form, f"name_{r.id}", r.name or "")
+            location = _form_text(form, f"location_{r.id}", r.location or "")
+            building = _form_text(form, f"building_{r.id}", default_building)
+            comment = _form_text(form, f"comment_{r.id}", "")
+            asset_tag = _form_text(form, f"asset_tag_{r.id}", "")
+            monitored = form.get(f"monitored_{r.id}") is not None
+            selected = rid in selected_ids or str(r.id) in selected_ids
+        else:
+            name = r.name or ""
+            location = r.location or ""
+            building = default_building
+            comment = ""
+            asset_tag = ""
+            monitored = True
+            selected = False
+        rows.append(
+            {
+                "id": r.id,
+                "ip_address": r.ip_address,
+                "already_managed": in_inv,
+                "addable": addable,
+                "ping_ok": bool(r.ping_ok),
+                "ping_rtt_ms": r.ping_rtt_ms,
+                "snmp_status": r.snmp_status or "skipped",
+                "name": name,
+                "location": location,
+                "vendor": r.vendor or "",
+                "model": r.model or "",
+                "building": building,
+                "comment": comment,
+                "asset_tag": asset_tag,
+                "monitored": monitored,
+                "selected": selected,
+            }
+        )
+    return rows
+
+
+def _load_scan_session(db, scan_id=None):
+    if scan_id:
+        row = db.query(ScanSession).filter(ScanSession.id == scan_id).first()
+        if row is not None:
+            return row
+    return db.query(ScanSession).order_by(ScanSession.id.desc()).first()
+
+
+def _render_discover_page(
+    request,
+    db,
+    *,
+    error=None,
+    form=None,
+    scan_id=None,
+    posted_form=None,
+    require_public=False,
+):
+    buildings = db.query(Building).order_by(Building.name).all()
+    profiles = _device_form_profiles(db)
+    session = _load_scan_session(db, scan_id)
+    if form is None:
+        form = _discover_form_defaults()
+        if session is not None and session.default_building:
+            form["default_building"] = session.default_building
+    form_profiles = _ordered_profiles(profiles, form.get("profile_ids") or [])
+    needs_discard = False
+    if session is not None and session.status in ("completed", "cancelled", "failed"):
+        needs_discard = _has_unsaved_review(db, session.id)
+    payload = _scan_status_payload(session)
+    scan_busy = session is not None and session.status in ("running", "cancelling")
+    rows = _review_rows(db, session, posted_form)
+    return templates.get_template("manage/discover.html").render(
+        request=request,
+        buildings=buildings,
+        profiles=form_profiles,
+        form=form,
+        error=error,
+        session=session,
+        results=rows,
+        needs_discard=needs_discard,
+        require_public=require_public,
+        scan_busy=scan_busy,
+        progress=payload,
+        progress_pct=_progress_pct(payload),
+    )
 
 
 # ========================
@@ -999,11 +1258,351 @@ async def delete_device(device_id: int, user=Depends(manager)):
     try:
         device = db.query(Device).filter(Device.id == device_id).first()
         if device:
+            # Application-level SET NULL; PRAGMA foreign_keys stays off (K21).
+            db.query(ScanResult).filter(ScanResult.managed_device_id == device_id).update(
+                {ScanResult.managed_device_id: None},
+                synchronize_session=False,
+            )
             db.delete(device)
             db.commit()
         return RedirectResponse(url="/manage/devices?success=Device deleted successfully", status_code=302)
     finally:
         db.close()
+
+
+# ========================
+# Discover (on-demand scan + bulk add)
+# ========================
+
+@app.get("/manage/discover", response_class=HTMLResponse)
+async def manage_discover(request: Request, scan: int = None, user=Depends(manager)):
+    disabled = _discover_disabled_redirect()
+    if disabled:
+        return disabled
+    db = SessionLocal()
+    try:
+        html = _render_discover_page(request, db, scan_id=scan)
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+@app.post("/manage/discover/start")
+async def start_discover(
+    request: Request,
+    target: str = Form(""),
+    default_building: str = Form(""),
+    confirm_public: str = Form(""),
+    discard_previous: str = Form(""),
+    ping_timeout_seconds: str = Form(""),
+    ping_concurrency: str = Form(""),
+    snmp_timeout_seconds: str = Form(""),
+    snmp_concurrency: str = Form(""),
+    user=Depends(manager),
+):
+    disabled = _discover_disabled_redirect()
+    if disabled:
+        return disabled
+
+    posted = await request.form()
+    profile_ids = _parse_id_list(posted.getlist("profile_ids"))
+    form = {
+        "target": (target or "").strip(),
+        "default_building": (default_building or "").strip(),
+        "profile_ids": profile_ids,
+        "confirm_public": _checkbox(confirm_public),
+        "discard_previous": _checkbox(discard_previous),
+        "ping_timeout_seconds": _optional_int(ping_timeout_seconds),
+        "ping_concurrency": _optional_int(ping_concurrency),
+        "snmp_timeout_seconds": _optional_int(snmp_timeout_seconds),
+        "snmp_concurrency": _optional_int(snmp_concurrency),
+    }
+    defaults = _discover_form_defaults()
+    for key in (
+        "ping_timeout_seconds",
+        "ping_concurrency",
+        "snmp_timeout_seconds",
+        "snmp_concurrency",
+    ):
+        if form[key] is None:
+            form[key] = defaults[key]
+
+    db = SessionLocal()
+    try:
+        if db.query(Building.id).first() is None:
+            html = _render_discover_page(
+                request, db, error="Add a building before adding devices.", form=form,
+            )
+            return HTMLResponse(content=html)
+
+        building_names = {name for (name,) in db.query(Building.name).all()}
+        stored_building = form["default_building"] or None
+        if stored_building and stored_building not in building_names:
+            stored_building = None
+
+        if profile_ids:
+            existing_ids = {
+                pid
+                for (pid,) in db.query(CredentialProfile.id)
+                .filter(CredentialProfile.id.in_(profile_ids))
+                .all()
+            }
+            profile_ids = [pid for pid in profile_ids if pid in existing_ids]
+            form["profile_ids"] = profile_ids
+
+        # Release the IMMEDIATE read lock before begin_scan's own transaction.
+        db.rollback()
+        try:
+            session_id = begin_scan(
+                form["target"],
+                profile_ids=profile_ids,
+                default_building=stored_building,
+                ping_timeout_seconds=form["ping_timeout_seconds"],
+                ping_concurrency=form["ping_concurrency"],
+                snmp_timeout_seconds=form["snmp_timeout_seconds"],
+                snmp_concurrency=form["snmp_concurrency"],
+                confirm_public=form["confirm_public"],
+                discard_previous=form["discard_previous"],
+                started_by=getattr(user, "username", None),
+            )
+        except DiscoveryDisabledError:
+            return RedirectResponse(url="/manage", status_code=302)
+        except TargetParseError as exc:
+            html = _render_discover_page(request, db, error=str(exc), form=form)
+            return HTMLResponse(content=html)
+        except PublicSpaceError as exc:
+            html = _render_discover_page(
+                request, db, error=str(exc), form=form, require_public=True,
+            )
+            return HTMLResponse(content=html)
+        except UnsavedReviewError:
+            html = _render_discover_page(
+                request,
+                db,
+                error="Check “Discard the current review grid and start a new scan” to continue.",
+                form=form,
+            )
+            return HTMLResponse(content=html)
+        except ScanAlreadyRunning as exc:
+            html = _render_discover_page(
+                request,
+                db,
+                error="A scan is already running. Cancel it before starting another.",
+                form=form,
+                scan_id=exc.session_id,
+            )
+            return HTMLResponse(content=html)
+
+        start_scan_task(session_id)
+        return RedirectResponse(url=f"/manage/discover?scan={session_id}", status_code=302)
+    finally:
+        db.close()
+
+
+@app.get("/manage/discover/status")
+async def discover_status(scan: int = None, user=Depends(manager)):
+    disabled = _discover_disabled_redirect()
+    if disabled:
+        return disabled
+    db = SessionLocal()
+    try:
+        session = _load_scan_session(db, scan)
+        return JSONResponse(_scan_status_payload(session))
+    finally:
+        db.close()
+
+
+@app.post("/manage/discover/cancel")
+async def cancel_discover(scan_id: str = Form(""), user=Depends(manager)):
+    sid = _optional_int(scan_id)
+    request_cancel(sid)
+    if sid:
+        return RedirectResponse(url=f"/manage/discover?scan={sid}", status_code=302)
+    return RedirectResponse(url="/manage/discover", status_code=302)
+
+
+@app.post("/manage/discover/save")
+async def save_discover(
+    request: Request,
+    scan_id: str = Form(""),
+    user=Depends(manager),
+):
+    disabled = _discover_disabled_redirect()
+    if disabled:
+        return disabled
+
+    posted = await request.form()
+    sid = _optional_int(scan_id)
+    selected_ids = _parse_id_list(posted.getlist("selected"))
+
+    db = SessionLocal()
+    try:
+        session = db.query(ScanSession).filter(ScanSession.id == sid).first() if sid else None
+        if session is None:
+            html = _render_discover_page(
+                request, db, error="Scan not found.", posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        if db.query(Building.id).first() is None:
+            html = _render_discover_page(
+                request,
+                db,
+                error="Add a building before adding devices.",
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        rows = []
+        if selected_ids:
+            found = {
+                r.id: r
+                for r in db.query(ScanResult)
+                .filter(
+                    ScanResult.session_id == sid,
+                    ScanResult.id.in_(selected_ids),
+                )
+                .all()
+            }
+            rows = [found[i] for i in selected_ids if i in found]
+
+        existing_ips = {ip for (ip,) in db.query(Device.ip_address).all()}
+        to_add = []
+        for row in rows:
+            if row.already_managed:
+                continue
+            if row.ip_address in existing_ips:
+                continue
+            if not row.ping_ok:
+                continue
+            to_add.append(row)
+
+        if not to_add:
+            html = _render_discover_page(
+                request,
+                db,
+                error="No new devices selected.",
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        missing_building = []
+        pending = []
+        tags_seen = {}
+        for row in to_add:
+            building = _form_text(posted, f"building_{row.id}").strip()
+            if not building:
+                missing_building.append(row.ip_address)
+            name = _form_text(posted, f"name_{row.id}").strip() or None
+            location = _form_text(posted, f"location_{row.id}").strip() or None
+            comment = _form_text(posted, f"comment_{row.id}").strip() or None
+            asset_tag = _form_text(posted, f"asset_tag_{row.id}").strip() or None
+            monitored = posted.get(f"monitored_{row.id}") is not None
+            pending.append(
+                {
+                    "row": row,
+                    "building": building,
+                    "name": name,
+                    "location": location,
+                    "comment": comment,
+                    "asset_tag": asset_tag,
+                    "monitored": monitored,
+                }
+            )
+            if asset_tag:
+                tags_seen.setdefault(asset_tag, []).append(row.ip_address)
+
+        if missing_building:
+            html = _render_discover_page(
+                request,
+                db,
+                error="Building is required for: " + ", ".join(missing_building),
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        batch_dupes = [tag for tag, ips in tags_seen.items() if len(ips) > 1]
+        if batch_dupes:
+            html = _render_discover_page(
+                request,
+                db,
+                error="Duplicate asset tags in selection: " + ", ".join(sorted(batch_dupes)),
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        existing_tags = set()
+        wanted_tags = [tag for tag in tags_seen if tag]
+        if wanted_tags:
+            existing_tags = {
+                tag
+                for (tag,) in db.query(Device.asset_tag)
+                .filter(Device.asset_tag.in_(wanted_tags))
+                .all()
+            }
+        if existing_tags:
+            html = _render_discover_page(
+                request,
+                db,
+                error="Asset tag already exists: " + ", ".join(sorted(existing_tags)),
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        added = 0
+        for item in pending:
+            row = item["row"]
+            profile_fk = row.credential_profile_id if row.snmp_status == "ok" else None
+            db.add(
+                Device(
+                    ip_address=row.ip_address,
+                    asset_tag=item["asset_tag"],
+                    name=item["name"],
+                    building=item["building"],
+                    location=item["location"],
+                    comment=item["comment"],
+                    monitored=item["monitored"],
+                    vendor=row.vendor,
+                    model=row.model,
+                    sys_object_id=row.sys_object_id,
+                    credential_profile_id=profile_fk,
+                    status="unknown",
+                    failure_count=0,
+                )
+            )
+            added += 1
+
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            html = _render_discover_page(
+                request,
+                db,
+                error="A device IP or asset tag is already in inventory.",
+                scan_id=sid,
+                posted_form=posted,
+            )
+            return HTMLResponse(content=html)
+
+        logger.info(
+            "discover save user=%s added=%s scan=%s",
+            getattr(user, "username", None),
+            added,
+            sid,
+        )
+        return RedirectResponse(
+            url=f"/manage/devices?success=Added {added} device(s)",
+            status_code=302,
+        )
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     import uvicorn
