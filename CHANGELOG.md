@@ -5,6 +5,7 @@
 - **Manage → Profiles** for SNMPv1 / v2c / v3 credentials (create / edit / test / delete); CLI `add-profile` / `list-profiles` / `snmp-test` / `discover`
 - Per-device **Refresh from SNMP** on the management Devices page (location, vendor, model; name only if asked)
 - SNMP vendor and model on the management device table and edit form (read-only)
+- Compact Vendor / Model column on the public Devices page (truncated at 20 characters; hover for the full value)
 - Inventory YAML **version 2**: export/import `vendor`, `model`, and `credential_profile` (profile name, never secrets)
 - AES-256-GCM encryption of community / auth / priv secrets at rest (key derived from `SECURITY__SECRET_KEY`)
 

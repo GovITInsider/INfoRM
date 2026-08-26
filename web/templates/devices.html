@@ -65,11 +65,12 @@
         			<th class="sortable" onclick="sortTable(2)" style="cursor: pointer;" class="text-nowrap">Name <span class="sort-arrow"></span></th>
         			<th class="sortable" onclick="sortTable(3)" style="cursor: pointer;" class="text-nowrap">Building <span class="sort-arrow"></span></th>
         			<th class="sortable" onclick="sortTable(4)">Location <span class="sort-arrow"></span></th>
-				<th class="sortable" onclick="sortTable(5)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(6)">Status <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(7)">Monitored <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(8)">Failures <span class="sort-arrow"></span></th>
-        			<th class="sortable" onclick="sortTable(9)">Last Checked<span class="sort-arrow"></span></th>
+				<th class="sortable" onclick="sortTable(5)" style="cursor: pointer;">Vendor / Model <span class="sort-arrow"></span></th>
+				<th class="sortable" onclick="sortTable(6)" style="cursor: pointer;">Comment <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(7)">Status <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(8)">Monitored <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(9)">Failures <span class="sort-arrow"></span></th>
+        			<th class="sortable" onclick="sortTable(10)">Last Checked<span class="sort-arrow"></span></th>
     			</tr>
 		</thead>
                 <tbody>
@@ -80,7 +81,10 @@
     			data-name="{{ device.name or '' }}"
     			data-building="{{ device.building or '' }}"
     			data-location="{{ device.location or '' }}"
+    			data-vendor="{{ device.vendor or '' }}"
+    			data-model="{{ device.model or '' }}"
     			data-ip="{{ device.ip_address }}">    
+			{% set vendor_model = ((device.vendor ~ ' ' if device.vendor else '') ~ (device.model or ''))|trim %}
 
 			<td style="max-width: 140px;" title="{{ device.asset_tag or '' }}">
     			    {% if device.asset_tag %}
@@ -93,6 +97,13 @@
 			<td class="text-nowrap">{{ device.name or '-' }}</td>
                         <td class="text-nowrap">{{ device.building or '-' }}</td>
                         <td>{{ device.location or '-' }}</td>
+			<td style="max-width: 180px;" title="{{ vendor_model }}">
+			    {% if vendor_model %}
+			        {{ vendor_model[:20] }}{% if vendor_model|length > 20 %}...{% endif %}
+			    {% else %}
+			        -
+			    {% endif %}
+			</td>
 			<td style="max-width: 180px;" title="{{ device.comment or '' }}">
 			    {% if device.comment %}
 			        {{ device.comment[:20] }}{% if device.comment|length > 20 %}...{% endif %}
@@ -130,8 +141,6 @@
     			    {% else %}
         			Never
     			    {% endif %}
-			</td>
-			</td>
 			</td>
                     </tr>
                     {% endfor %}
@@ -176,6 +185,8 @@ function filterTable() {
             (row.dataset.name || '') + ' ' +
             (row.dataset.building || '') + ' ' +
             (row.dataset.location || '') + ' ' +
+            (row.dataset.vendor || '') + ' ' +
+            (row.dataset.model || '') + ' ' +
             (row.dataset.ip || '')
         ).toLowerCase();
 
@@ -222,18 +233,18 @@ function sortTable(columnIndex) {
         let valB = b.cells[columnIndex].textContent.trim().toLowerCase();
 
         // Special handling for specific columns
-        if (columnIndex === 8) {
+        if (columnIndex === 9) {
             // Failures – numeric
             valA = parseInt(valA) || 0;
             valB = parseInt(valB) || 0;
         }
-        else if (columnIndex === 6) {
+        else if (columnIndex === 7) {
             // Status – logical order: down → pre-alarm → unknown → up
             const statusOrder = { 'down': 0, 'pre-alarm': 1, 'unknown': 2, 'up': 3 };
             valA = statusOrder[valA] !== undefined ? statusOrder[valA] : 99;
             valB = statusOrder[valB] !== undefined ? statusOrder[valB] : 99;
         }
-        else if (columnIndex === 7) {
+        else if (columnIndex === 8) {
             // Monitored – Yes before No when ascending
             valA = valA === 'yes' ? 0 : 1;
             valB = valB === 'yes' ? 0 : 1;

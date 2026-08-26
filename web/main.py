@@ -105,6 +105,8 @@ templates.globals["url_for"] = app.url_path_for
 # Helper
 # ========================
 def device_to_dict(device):
+    vendor = device.vendor or ""
+    model = device.model or ""
     return {
         "id": device.id,
         "asset_tag": device.asset_tag or "-",
@@ -112,6 +114,8 @@ def device_to_dict(device):
         "name": device.name or "-",
         "building": device.building or "-",
         "location": device.location or "-",
+        "vendor": vendor,
+        "model": model,
         "comment": device.comment or "-",
         "status": device.status,
         "failure_count": device.failure_count,
