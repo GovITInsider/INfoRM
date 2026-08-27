@@ -1,4 +1,4 @@
-## [Unreleased]
+## [1.2.1] - 2026-08-27
 
 ### Added
 - Manual **Add Device** with a credential profile now queries SNMP and fills vendor, model, location, and a blank name
