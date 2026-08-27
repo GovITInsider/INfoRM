@@ -152,7 +152,7 @@ Common commands:
 
 CLI `discover` is a probe: it prints a table and does **not** write `devices` or scan sessions.
 
-The public **Devices** page (`/devices`) shows SNMP vendor and model in a compact **Vendor / Model** column after Location. Values longer than 20 characters are shortened; hover to see the full string. A dash means identity has not been filled yet (no profile, SNMP failed, or not yet refreshed). Search still matches the full vendor and model.
+The public **Devices** page (`/devices`) shows SNMP vendor and model in a compact **Vendor / Model** column after Location. Values longer than 25 characters are shortened; hover to see the full string. A dash means identity has not been filled yet (no profile, SNMP failed, or not yet refreshed). Search still matches the full vendor and model. The Devices, Manage → Devices, and Discover pages use a wider layout (max 1800px).
 
 ### SNMP identity and Refresh
 

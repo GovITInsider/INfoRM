@@ -9,6 +9,8 @@
 - Refresh from SNMP fills a blank device name even when **Also update name from sysName** is unchecked
 - CLI `add-device --profile` fills SNMP identity after insert
 - README and Help document Add Device SNMP fill, table-row Refresh SNMP, CLI `refresh-snmp`, and the SNMPv3 `cryptography` requirement
+- Wider layout (max 1800px) on public Devices, Manage → Devices, and Discover
+- Public Vendor / Model truncation increased from 20 to 25 characters
 
 ### Fixed
 - SNMPv3 `authPriv` failed with a timeout: pysnmp needs the `cryptography` package for AES/DES privacy. `pycryptodomex` is only used for secrets at rest. A missing crypto backend is no longer reported as a timeout.

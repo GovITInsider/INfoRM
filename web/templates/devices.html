@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block body_container %}container-wide{% endblock %}
+
 {% block title %}Device Dashboard{% endblock %}
 
 {% block content %}
@@ -97,9 +99,9 @@
 			<td class="text-nowrap">{{ device.name or '-' }}</td>
                         <td class="text-nowrap">{{ device.building or '-' }}</td>
                         <td>{{ device.location or '-' }}</td>
-			<td style="max-width: 180px;" title="{{ vendor_model }}">
+			<td style="max-width: 220px;" title="{{ vendor_model }}">
 			    {% if vendor_model %}
-			        {{ vendor_model[:20] }}{% if vendor_model|length > 20 %}...{% endif %}
+			        {{ vendor_model[:25] }}{% if vendor_model|length > 25 %}...{% endif %}
 			    {% else %}
 			        -
 			    {% endif %}
