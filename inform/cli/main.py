@@ -15,7 +15,7 @@ from inform.core.database import SessionLocal
 from inform.core.models import Building, CredentialProfile, Device
 from inform.core.config import settings
 from inform.core.secrets import encrypt_secret
-from inform.snmp.client import get_device_info
+from inform.snmp.client import apply_identity_to_device, get_device_info, identify_sync
 from inform.snmp.scan import clamp_scan_options, probe_hosts
 from inform.snmp.targets import TargetParseError, parse_scan_target
 
@@ -248,6 +248,7 @@ def add_device(
             return
 
         profile_id = None
+        cred_profile = None
         if profile:
             cred_profile = db.query(CredentialProfile).filter(CredentialProfile.name == profile).first()
             if not cred_profile:
@@ -270,6 +271,20 @@ def add_device(
         db.refresh(device)
 
         rprint(f"[green]✓[/green] Device added successfully: [bold]{ip}[/bold] (ID: {device.id})")
+
+        if cred_profile:
+            identity, err, _ = identify_sync(ip, [cred_profile])
+            if identity is None:
+                label = err.value if err else "failed"
+                rprint(f"[yellow]SNMP identity was not filled ({label}).[/yellow]")
+            else:
+                apply_identity_to_device(device, identity, fill_name_if_empty=True)
+                db.commit()
+                rprint(
+                    f"[green]✓[/green] SNMP identity filled: "
+                    f"name={device.name or '-'} location={device.location or '-'} "
+                    f"vendor={device.vendor or '-'} model={device.model or '-'}"
+                )
 
     except Exception as e:
         db.rollback()
@@ -519,6 +534,70 @@ def delete_device(ip: str = typer.Argument(..., help="IP address of the device t
     except Exception as e:
         db.rollback()
         rprint(f"[red]Error deleting device:[/red] {e}")
+    finally:
+        db.close()
+
+
+@app.command(name="refresh-snmp")
+def refresh_snmp(
+    ip: str = typer.Argument(..., help="IP address of the device to refresh"),
+    update_name: bool = typer.Option(
+        False, "--update-name", help="Overwrite the device name from sysName"
+    ),
+    profile: str = typer.Option(
+        "", "--profile", "-p", help="Profile name if the device has none linked"
+    ),
+):
+    """Refresh vendor, model, and location for an existing device from SNMP"""
+    db: Session = SessionLocal()
+    try:
+        device = db.query(Device).filter(Device.ip_address == ip).first()
+        if not device:
+            rprint(f"[red]Error:[/red] Device with IP {ip} not found.")
+            return
+
+        cred_profile = None
+        if profile:
+            cred_profile = (
+                db.query(CredentialProfile)
+                .filter(CredentialProfile.name == profile)
+                .first()
+            )
+            if not cred_profile:
+                rprint(f"[red]Error:[/red] SNMP profile '{profile}' not found.")
+                return
+        elif device.credential_profile_id:
+            cred_profile = (
+                db.query(CredentialProfile)
+                .filter(CredentialProfile.id == device.credential_profile_id)
+                .first()
+            )
+
+        if not cred_profile:
+            rprint("[red]Error:[/red] No credential profile linked. Pass --profile NAME.")
+            return
+
+        identity, err, _ = identify_sync(ip, [cred_profile])
+        if identity is None:
+            label = err.value if err else "failed"
+            rprint(f"[red]SNMP refresh failed:[/red] {label}")
+            return
+
+        apply_identity_to_device(
+            device,
+            identity,
+            update_name=update_name,
+            fill_name_if_empty=True,
+        )
+        db.commit()
+        rprint(f"[green]✓[/green] SNMP identity refreshed for [bold]{ip}[/bold]")
+        rprint(f"{'Name:':<16} {device.name or '-'}")
+        rprint(f"{'Location:':<16} {device.location or '-'}")
+        rprint(f"{'Vendor:':<16} {device.vendor or '-'}")
+        rprint(f"{'Model:':<16} {device.model or '-'}")
+    except Exception as e:
+        db.rollback()
+        rprint(f"[red]Error:[/red] {e}")
     finally:
         db.close()
 

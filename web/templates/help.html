@@ -160,7 +160,7 @@
         <h5>What You Can Do</h5>
         <ul>
             <li><strong>Buildings</strong> — Add, edit, and delete buildings. This helps maintain consistency across the system.</li>
-            <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed). Vendor and model are read-only (filled by Discover or Refresh from SNMP).</li>
+            <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed). Vendor and model are read-only. Selecting a credential profile on add queries SNMP for vendor, model, location, and name (if name is blank). Existing devices can be updated with <strong>Refresh SNMP</strong> in the table or <strong>Refresh from SNMP</strong> on the edit form.</li>
             <li><strong>Discover</strong> — Scan an IPv4 address or subnet and bulk-add live hosts (see <a href="#discover">Discover</a>). Hidden when <code>discovery.enabled</code> is false.</li>
             <li><strong>Profiles</strong> — SNMPv1 / v2c / v3 credentials used for identity lookup, not for health checks (see <a href="#profiles">Credential Profiles</a>).</li>
             <li><strong>Export inventory</strong> — Download a YAML backup of all buildings and devices (see <a href="#inventory">Inventory Export and Import</a>).</li>
@@ -210,8 +210,8 @@
             <li>A stuck scan is failed by a watchdog (default 900 seconds).</li>
         </ul>
         <p>
-            <strong>Refresh from SNMP</strong> is on the device edit page, not on the Discover grid.
-            It overwrites location, vendor, and model. Name updates only if you check
+            <strong>Refresh from SNMP</strong> is on the device edit page and as <strong>Refresh SNMP</strong> on each row of Manage → Devices (not on the Discover grid).
+            It overwrites location, vendor, and model. A blank name is filled from sysName; an existing name updates only if you check
             <strong>Also update name from sysName</strong>. Comment, building, asset tag, and monitored are never changed.
         </p>
     </div>

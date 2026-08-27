@@ -85,6 +85,13 @@ _TIMEOUT_TOKENS = (
     "requesttimedout",
     "nosnmpresponsereceivedbeforetimeout",
 )
+# Local crypto failures (missing cryptography package, etc.). Not a wire timeout.
+_CRYPTO_ERROR_TOKENS = (
+    "encryptionerror",
+    "cipheringservicesnotavailable",
+    "unsupportedprivprotocol",
+    "unsupportedauthprotocol",
+)
 
 
 class SnmpErrorKind(str, Enum):
@@ -235,6 +242,8 @@ def _classify_error(error_indication, error_status) -> SnmpErrorKind:
         return SnmpErrorKind.AUTH
     if any(tok in blob for tok in _TIMEOUT_TOKENS):
         return SnmpErrorKind.TIMEOUT
+    if any(tok in blob for tok in _CRYPTO_ERROR_TOKENS):
+        return SnmpErrorKind.OTHER
     if error_indication is not None:
         return SnmpErrorKind.TIMEOUT
     return SnmpErrorKind.OTHER
@@ -420,7 +429,13 @@ async def identify(
             if error_indication or error_status:
                 kind = _classify_error(error_indication, error_status)
                 kinds.append(kind)
-                logger.debug("SNMP %s profile %s: %s", ip, label, kind.value)
+                logger.debug(
+                    "SNMP %s profile %s: %s (%s)",
+                    ip,
+                    label,
+                    kind.value,
+                    error_indication or error_status,
+                )
                 continue
 
             vmap = _varbind_map(var_binds)
@@ -470,29 +485,60 @@ async def identify(
     return None, SnmpErrorKind.OTHER, None
 
 
-def get_device_info(ip: str, profile: CredentialProfile, timeout: float = 2.0):
-    # CLI only — web must await identify().
+def apply_identity_to_device(
+    device,
+    identity: SnmpIdentity,
+    *,
+    update_name: bool = False,
+    fill_name_if_empty: bool = False,
+) -> None:
+    """Copy SNMP identity onto a Device (or duck-typed object). Never touches comment/building/asset tag/monitored."""
+    device.location = identity.sys_location
+    device.vendor = identity.vendor
+    device.model = identity.model
+    device.sys_object_id = identity.sys_object_id
+    if identity.profile_id is not None:
+        device.credential_profile_id = identity.profile_id
+    if update_name:
+        device.name = identity.sys_name
+    elif fill_name_if_empty and not str(getattr(device, "name", None) or "").strip():
+        device.name = identity.sys_name
+
+
+def identify_sync(
+    ip: str,
+    profiles: Sequence[CredentialProfile],
+    timeout: float = 2.0,
+    retries: int = 1,
+) -> tuple[SnmpIdentity | None, SnmpErrorKind | None, int | None]:
+    """CLI helper around identify(). Web must await identify() on the event loop."""
+
     async def _run():
         engine = SnmpEngine()
         try:
-            identity, err, _ = await identify(engine, ip, [profile], timeout, retries=1)
-            if identity is None:
-                if err == SnmpErrorKind.TIMEOUT:
-                    return {"error": "SNMP request timed out"}
-                if err == SnmpErrorKind.AUTH:
-                    return {"error": "SNMP authentication failed"}
-                return {"error": "SNMP request failed"}
-            return {
-                "sysName": identity.sys_name or "",
-                "sysLocation": identity.sys_location or "",
-                "sysObjectID": identity.sys_object_id or "",
-                "vendor": identity.vendor or "",
-                "model": identity.model or "",
-            }
+            return await identify(engine, ip, profiles, timeout, retries=retries)
         finally:
             engine.close_dispatcher()
 
     try:
         return asyncio.run(_run())
     except Exception:
+        return None, SnmpErrorKind.OTHER, None
+
+
+def get_device_info(ip: str, profile: CredentialProfile, timeout: float = 2.0):
+    # CLI only — web must await identify().
+    identity, err, _ = identify_sync(ip, [profile], timeout=timeout, retries=1)
+    if identity is None:
+        if err == SnmpErrorKind.TIMEOUT:
+            return {"error": "SNMP request timed out"}
+        if err == SnmpErrorKind.AUTH:
+            return {"error": "SNMP authentication failed"}
         return {"error": "SNMP request failed"}
+    return {
+        "sysName": identity.sys_name or "",
+        "sysLocation": identity.sys_location or "",
+        "sysObjectID": identity.sys_object_id or "",
+        "vendor": identity.vendor or "",
+        "model": identity.model or "",
+    }

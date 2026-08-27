@@ -85,6 +85,9 @@
                         </option>
                         {% endfor %}
                     </select>
+                    {% if not edit_device %}
+                    <div class="form-text">On add, INfoRM queries this profile for vendor, model, location, and name (if name is blank).</div>
+                    {% endif %}
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Vendor</label>
@@ -121,7 +124,7 @@
         <hr>
         <form method="post" action="/manage/devices/{{ edit_device.id }}/refresh-snmp">
             <p class="mb-2"><strong>Refresh from SNMP</strong></p>
-            <p class="form-text mt-0">Overwrites location, vendor, and model from the device. Comment, building, asset tag, and monitored are never changed.</p>
+            <p class="form-text mt-0">Overwrites location, vendor, and model. Fills a blank name, or overwrites name if you check the box below. Comment, building, asset tag, and monitored are never changed. You can also use <strong>Refresh SNMP</strong> in the device table.</p>
             <div class="row g-3 align-items-end">
                 {% if not edit_device.credential_profile_id %}
                 <div class="col-md-4">
@@ -228,8 +231,16 @@
                                 <span class="badge bg-secondary">No</span>
                             {% endif %}
                         </td>
-                        <td class="text-end">
+                        <td class="text-end text-nowrap">
                             <a href="/manage/devices?edit={{ device.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                            {% if device.credential_profile_id %}
+                            <form method="post" action="/manage/devices/{{ device.id }}/refresh-snmp" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                        title="Refresh vendor, model, and location from SNMP">
+                                    Refresh SNMP
+                                </button>
+                            </form>
+                            {% endif %}
                             <a href="/manage/devices/{{ device.id }}/delete"
                                class="btn btn-sm btn-outline-danger"
                                onclick="return confirm('Delete this device?');">

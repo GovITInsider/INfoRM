@@ -1,3 +1,17 @@
+## [Unreleased]
+
+### Added
+- Manual **Add Device** with a credential profile now queries SNMP and fills vendor, model, location, and a blank name
+- **Refresh SNMP** on each row of Manage → Devices (uses the device's linked profile)
+- CLI `refresh-snmp <ip>` (`--update-name`, optional `--profile`)
+
+### Changed
+- Refresh from SNMP fills a blank device name even when **Also update name from sysName** is unchecked
+- CLI `add-device --profile` fills SNMP identity after insert
+
+### Fixed
+- SNMPv3 `authPriv` failed with a timeout: pysnmp needs the `cryptography` package for AES/DES privacy. `pycryptodomex` is only used for secrets at rest. A missing crypto backend is no longer reported as a timeout.
+
 ## [1.2.0] - 2026-08-26
 
 ### Added

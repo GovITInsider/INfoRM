@@ -27,6 +27,7 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - fastapi-login (authentication)
 - passlib + bcrypt (password hashing)
 - pysnmp 7.1 (SNMP identity)
+- cryptography (SNMPv3 privacy / AES and DES)
 - pycryptodomex (AES-256-GCM for credential secrets)
 
 ## Getting Started
@@ -139,7 +140,7 @@ Common commands:
 - `list-devices`
 - `edit-device <ip>`
 - `search-devices <term>`
-- `add-profile` / `list-profiles` / `snmp-test`
+- `add-profile` / `list-profiles` / `snmp-test` / `refresh-snmp`
 - `discover <ip-or-cidr>` (optional repeatable `--profile`, `--confirm-public`; probe only, does not write devices)
 - `export-inventory -o inventory.yaml`
 - `import-inventory inventory.yaml` (optional `--dry-run`)
@@ -150,7 +151,7 @@ Common commands:
 
 The public **Devices** page (`/devices`) shows SNMP vendor and model in a compact **Vendor / Model** column after Location. Values longer than 20 characters are shortened; hover to see the full string. A dash means the device has not been discovered or refreshed yet. Search still matches the full vendor and model.
 
-**Manage → Devices** shows vendor and model as separate read-only fields. **Refresh from SNMP** overwrites location, vendor, and model (and `sys_object_id` internally). Name updates only if you check **Also update name from sysName**. Comment, building, asset tag, and monitored are never changed by SNMP.
+**Manage → Devices** shows vendor and model as separate read-only fields. Adding a device with a credential profile queries SNMP immediately and fills vendor, model, location, and name (when name is blank). **Refresh SNMP** on a table row, or **Refresh from SNMP** on the edit form, overwrites location, vendor, and model (and `sys_object_id` internally). A blank name is filled; an existing name changes only if you check **Also update name from sysName** (CLI: `--update-name`). Comment, building, asset tag, and monitored are never changed by SNMP. The device must have a linked profile for the table button; otherwise open Edit and pick a profile first.
 
 CLI `discover` is a probe: it prints a table and does **not** write `devices` or scan sessions.
 

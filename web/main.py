@@ -45,7 +45,12 @@ from inform.core.inventory import build_inventory, dump_inventory_yaml
 from inform.core.secrets import encrypt_secret
 from inform.version import __version__
 from inform.core.timeutils import to_local
-from inform.snmp.client import SnmpEngine, SnmpErrorKind, identify
+from inform.snmp.client import (
+    SnmpEngine,
+    SnmpErrorKind,
+    apply_identity_to_device,
+    identify,
+)
 from inform.snmp.targets import TargetParseError, parse_scan_target
 
 from starlette.responses import RedirectResponse
@@ -611,6 +616,18 @@ def _snmp_refresh_error_label(err):
     if err == SnmpErrorKind.AUTH:
         return "auth"
     return "no SNMP"
+
+
+async def _snmp_identify(ip, profiles, *, retries=1):
+    timeout = float(settings.discovery.default_snmp_timeout_seconds)
+    engine = SnmpEngine()
+    try:
+        return await identify(engine, ip, profiles, timeout, retries=retries)
+    except Exception as exc:
+        logger.error("SNMP identify failed for %s: %s", ip, type(exc).__name__)
+        return None, SnmpErrorKind.OTHER, None
+    finally:
+        engine.close_dispatcher()
 
 
 # ========================
@@ -1194,6 +1211,9 @@ async def save_device(
     device_id: int = Form(None),
     user=Depends(manager)
 ):
+    snmp_profile = None
+    device_pk = None
+    snmp_ip = None
     db = SessionLocal()
     try:
         # ========== TEMPORARY DEBUG ==========
@@ -1204,6 +1224,8 @@ async def save_device(
         # =======================================================
 
         profile_fk = None
+        cred = None
+        added = False
         credential_profile_id = _optional_int(credential_profile_id)
         if credential_profile_id:
             cred = db.query(CredentialProfile).filter(
@@ -1260,9 +1282,20 @@ async def save_device(
                 credential_profile_id=profile_fk,
             )
             db.add(device)
+            added = True
 
         db.commit()
-        return RedirectResponse(url="/manage/devices?success=Device added/edited successfully", status_code=302)
+        if added:
+            db.refresh(device)
+            device_pk = device.id
+            snmp_ip = device.ip_address
+            if cred is not None:
+                snmp_profile = _detached_snmp_profile(cred)
+        else:
+            return RedirectResponse(
+                url="/manage/devices?success=Device updated successfully",
+                status_code=302,
+            )
     except Exception as e:
         db.rollback()
         devices = db.query(Device).order_by(Device.ip_address).all()
@@ -1278,6 +1311,50 @@ async def save_device(
         return HTMLResponse(content=html, status_code=200)
     finally:
         db.close()
+
+    if snmp_profile and snmp_ip and device_pk:
+        identity, err, _ = await _snmp_identify(snmp_ip, [snmp_profile])
+        if identity is not None:
+            db = SessionLocal()
+            try:
+                device = db.query(Device).filter(Device.id == device_pk).first()
+                if device:
+                    apply_identity_to_device(
+                        device, identity, fill_name_if_empty=True,
+                    )
+                    db.commit()
+            except Exception:
+                db.rollback()
+                return _devices_redirect(
+                    success="Device added successfully",
+                    error="SNMP identity was not filled: no SNMP",
+                )
+            finally:
+                db.close()
+            logger.info(
+                "SNMP add user=%s device=%s ip=%s result=ok",
+                getattr(user, "username", None),
+                device_pk,
+                snmp_ip,
+            )
+            return _devices_redirect(success="Device added. SNMP identity filled.")
+        err_label = _snmp_refresh_error_label(err)
+        logger.info(
+            "SNMP add user=%s device=%s ip=%s result=%s",
+            getattr(user, "username", None),
+            device_pk,
+            snmp_ip,
+            err_label,
+        )
+        return _devices_redirect(
+            success="Device added successfully",
+            error=f"SNMP identity was not filled: {err_label}",
+        )
+
+    return RedirectResponse(
+        url="/manage/devices?success=Device added successfully",
+        status_code=302,
+    )
 
 
 @app.post("/manage/devices/{device_id}/refresh-snmp")
@@ -1335,22 +1412,7 @@ async def refresh_device_snmp(
             error=load_error or "SNMP refresh failed: no SNMP",
         )
 
-    timeout = float(settings.discovery.default_snmp_timeout_seconds)
-    engine = SnmpEngine()
-    try:
-        identity, err, _ = await identify(
-            engine, ip, profiles_to_try, timeout, retries=1,
-        )
-    except Exception as exc:
-        logger.error(
-            "SNMP refresh failed for %s device %s: %s",
-            ip,
-            device_id,
-            type(exc).__name__,
-        )
-        identity, err = None, SnmpErrorKind.OTHER
-    finally:
-        engine.close_dispatcher()
+    identity, err, _ = await _snmp_identify(ip, profiles_to_try)
 
     if identity is None:
         err_label = _snmp_refresh_error_label(err)
@@ -1371,13 +1433,12 @@ async def refresh_device_snmp(
         device = db.query(Device).filter(Device.id == device_id).first()
         if not device:
             return _devices_redirect(error="Device not found.")
-        device.location = identity.sys_location
-        device.vendor = identity.vendor
-        device.model = identity.model
-        device.sys_object_id = identity.sys_object_id
-        device.credential_profile_id = identity.profile_id
-        if update_name:
-            device.name = identity.sys_name
+        apply_identity_to_device(
+            device,
+            identity,
+            update_name=update_name,
+            fill_name_if_empty=True,
+        )
         db.commit()
         logger.info(
             "SNMP refresh user=%s device=%s ip=%s result=ok",
