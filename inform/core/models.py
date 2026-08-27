@@ -6,6 +6,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from inform.core.database import Base
 
+_BLANK_TOKENS = frozenset({"", "none", "null"})
+
+
+def blank_to_none(value: str | None) -> str | None:
+    """Empty / whitespace / the literal 'None' from Jinja → SQL NULL."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.lower() in _BLANK_TOKENS:
+        return None
+    return text
+
 
 # ========================
 # Credential Profiles

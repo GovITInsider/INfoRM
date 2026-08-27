@@ -104,6 +104,12 @@ def migrate_schema() -> None:
             "UPDATE credential_profiles SET security_level = 'authPriv' "
             "WHERE security_level IS NULL"
         ))
+        # Jinja used to print Python None as the text "None" in form fields.
+        for column in ("asset_tag", "name", "location", "comment"):
+            conn.execute(text(
+                f"UPDATE devices SET {column} = NULL "
+                f"WHERE {column} = '' OR lower({column}) IN ('none', 'null')"
+            ))
 
 
 def ensure_schema() -> None:

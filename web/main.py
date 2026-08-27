@@ -30,6 +30,7 @@ from inform.core.models import (
     DiscoveryJob,
     ScanResult,
     ScanSession,
+    blank_to_none,
 )
 from inform.core.config import settings
 from inform.core.auth import (
@@ -96,9 +97,14 @@ async def sliding_admin_session(request: Request, call_next):
 # ========================
 # Jinja2 Setup
 # ========================
+def _jinja_none_as_empty(value):
+    return "" if value is None else value
+
+
 templates = Environment(
     loader=FileSystemLoader("web/templates"),
-    auto_reload=True
+    auto_reload=True,
+    finalize=_jinja_none_as_empty,
 )
 templates.globals["app_version"] = __version__
 templates.globals["discovery_enabled"] = settings.discovery.enabled
@@ -1227,6 +1233,10 @@ async def save_device(
         cred = None
         added = False
         credential_profile_id = _optional_int(credential_profile_id)
+        asset_tag = blank_to_none(asset_tag)
+        name = blank_to_none(name)
+        location = blank_to_none(location)
+        comment = blank_to_none(comment)
         if credential_profile_id:
             cred = db.query(CredentialProfile).filter(
                 CredentialProfile.id == credential_profile_id
@@ -1249,11 +1259,11 @@ async def save_device(
             if device:
                 #print(f"Found device: {device.ip_address}")          # for debug
                 device.ip_address = ip_address.strip()
-                device.asset_tag = asset_tag.strip() if asset_tag else None
-                device.name = name.strip() if name else None
+                device.asset_tag = asset_tag
+                device.name = name
                 device.building = building
-                device.location = location.strip() if location else None
-                device.comment = comment.strip() if comment else None
+                device.location = location
+                device.comment = comment
                 device.monitored = monitored
                 device.credential_profile_id = profile_fk
                 #print(f"Set device.comment to: '{device.comment}'")  # for debug
@@ -1273,11 +1283,11 @@ async def save_device(
 
             device = Device(
                 ip_address=ip_address.strip(),
-                asset_tag=asset_tag.strip() if asset_tag else None,
-                name=name.strip() if name else None,
+                asset_tag=asset_tag,
+                name=name,
                 building=building,
-                location=location.strip() if location else None,
-                comment=comment.strip() if comment else None,
+                location=location,
+                comment=comment,
                 monitored=monitored,
                 credential_profile_id=profile_fk,
             )
@@ -1296,6 +1306,26 @@ async def save_device(
                 url="/manage/devices?success=Device updated successfully",
                 status_code=302,
             )
+    except IntegrityError as exc:
+        db.rollback()
+        err = str(exc).lower()
+        if "asset_tag" in err:
+            error = "Asset tag must be unique. Leave it blank if the device has no tag."
+        elif "ip_address" in err:
+            error = f"Device with IP {ip_address} already exists."
+        else:
+            error = "Could not save the device."
+        devices = db.query(Device).order_by(Device.ip_address).all()
+        buildings = db.query(Building).order_by(Building.name).all()
+        profiles = _device_form_profiles(db)
+        html = templates.get_template("manage/devices.html").render(
+            request=request,
+            devices=devices,
+            buildings=buildings,
+            profiles=profiles,
+            error=error,
+        )
+        return HTMLResponse(content=html, status_code=200)
     except Exception as e:
         db.rollback()
         devices = db.query(Device).order_by(Device.ip_address).all()
@@ -1306,8 +1336,9 @@ async def save_device(
             devices=devices,
             buildings=buildings,
             profiles=profiles,
-            error=str(e)
+            error="Could not save the device.",
         )
+        logger.error("save_device failed: %s", type(e).__name__)
         return HTMLResponse(content=html, status_code=200)
     finally:
         db.close()
@@ -1710,10 +1741,10 @@ async def save_discover(
             building = _form_text(posted, f"building_{row.id}").strip()
             if not building:
                 missing_building.append(row.ip_address)
-            name = _form_text(posted, f"name_{row.id}").strip() or None
-            location = _form_text(posted, f"location_{row.id}").strip() or None
-            comment = _form_text(posted, f"comment_{row.id}").strip() or None
-            asset_tag = _form_text(posted, f"asset_tag_{row.id}").strip() or None
+            name = blank_to_none(_form_text(posted, f"name_{row.id}"))
+            location = blank_to_none(_form_text(posted, f"location_{row.id}"))
+            comment = blank_to_none(_form_text(posted, f"comment_{row.id}"))
+            asset_tag = blank_to_none(_form_text(posted, f"asset_tag_{row.id}"))
             monitored = posted.get(f"monitored_{row.id}") is not None
             pending.append(
                 {

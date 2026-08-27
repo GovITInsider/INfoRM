@@ -12,6 +12,7 @@
 
 ### Fixed
 - SNMPv3 `authPriv` failed with a timeout: pysnmp needs the `cryptography` package for AES/DES privacy. `pycryptodomex` is only used for secrets at rest. A missing crypto backend is no longer reported as a timeout.
+- Editing a device with a blank asset tag failed with `UNIQUE constraint failed: devices.asset_tag`. Jinja printed Python `None` as the text `None`, so the second blank tag collided. Blank tags are stored as NULL; existing `"None"` values are cleaned on startup.
 
 ## [1.2.0] - 2026-08-26
 
