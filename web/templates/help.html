@@ -30,6 +30,7 @@
             <li><a href="#alarm-history">Alarm History</a></li>
             <li><a href="#auto-refresh">Auto-Refresh Behavior</a></li>
             <li><a href="#management-gui">Management GUI</a></li>
+            <li><a href="#snmp-identity">SNMP Identity and Refresh</a></li>
             <li><a href="#discover">Discover</a></li>
             <li><a href="#profiles">Credential Profiles</a></li>
             <li><a href="#inventory">Inventory Export and Import</a></li>
@@ -86,7 +87,7 @@
             <li><strong>Name</strong> — Friendly name of the device (optional).</li>
             <li><strong>Building</strong> — Building or site where the device is located.</li>
             <li><strong>Location</strong> — More specific location (e.g. "MDF", "Closet 3").</li>
-            <li><strong>Vendor / Model</strong> — SNMP hardware identity (for example "Cisco C9300-48P"). Long values are shortened; hover to see the full value. A dash means the device has not been discovered or refreshed yet.</li>
+            <li><strong>Vendor / Model</strong> — SNMP hardware identity (for example "Cisco C9300-48P"). Long values are shortened; hover to see the full value. A dash means identity has not been filled yet (added without a profile, SNMP failed, or not yet refreshed). See <a href="#snmp-identity">SNMP Identity and Refresh</a>.</li>
             <li><strong>Comments</strong> — Comments/Description. Long comments are shortened; hover to see the full value.</li>
             <li><strong>Status</strong> — Current reachability status (Up, Pre-Alarm, Down, or Unknown).</li>
             <li><strong>Monitored</strong> — Whether the device is actively being pinged.</li>
@@ -160,7 +161,7 @@
         <h5>What You Can Do</h5>
         <ul>
             <li><strong>Buildings</strong> — Add, edit, and delete buildings. This helps maintain consistency across the system.</li>
-            <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed). Vendor and model are read-only (filled by Discover or Refresh from SNMP).</li>
+            <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed). Vendor and model are read-only; see <a href="#snmp-identity">SNMP Identity and Refresh</a>.</li>
             <li><strong>Discover</strong> — Scan an IPv4 address or subnet and bulk-add live hosts (see <a href="#discover">Discover</a>). Hidden when <code>discovery.enabled</code> is false.</li>
             <li><strong>Profiles</strong> — SNMPv1 / v2c / v3 credentials used for identity lookup, not for health checks (see <a href="#profiles">Credential Profiles</a>).</li>
             <li><strong>Export inventory</strong> — Download a YAML backup of all buildings and devices (see <a href="#inventory">Inventory Export and Import</a>).</li>
@@ -182,6 +183,53 @@
         </ul>
     </div>
 
+    <!-- SNMP identity -->
+    <div id="snmp-identity" class="mb-5">
+        <h2>SNMP Identity and Refresh</h2>
+        <p>
+            INfoRM uses SNMP only to identify a device (name, location, vendor, model).
+            Up / Pre-Alarm / Down always come from ICMP pings.
+            You do not need to delete a device and run Discover again to update those fields.
+        </p>
+
+        <h5>How identity is filled</h5>
+        <ul>
+            <li>
+                <strong>Add Device</strong> — If you select a credential profile, INfoRM queries the device after save
+                and fills vendor, model, location, and name when name is blank.
+                If SNMP fails, the device is still added and a warning is shown.
+            </li>
+            <li>
+                <strong>Refresh SNMP</strong> — Button on each row of <strong>Manage → Devices</strong> when a profile is linked.
+                Overwrites location, vendor, and model, and fills a blank name.
+            </li>
+            <li>
+                <strong>Refresh from SNMP</strong> — On the device edit form. Same fields as the table button.
+                Check <strong>Also update name from sysName</strong> to overwrite an existing name.
+                If no profile is linked, pick one (or <strong>Try all profiles</strong>).
+            </li>
+            <li>
+                <strong>Discover</strong> — SNMP prefills the review grid; Save selected writes those values for <em>new</em> hosts only.
+                Already-managed IPs are listed and never overwritten (see <a href="#discover">Discover</a>).
+            </li>
+        </ul>
+
+        <h5>What SNMP never changes</h5>
+        <p>
+            Comment, building, asset tag, monitored, and IP.
+            An existing name is not overwritten unless you check <strong>Also update name from sysName</strong>
+            (CLI: <code>refresh-snmp --update-name</code>).
+            Assigning a profile on Edit and clicking <strong>Update Device</strong> does not query SNMP — use Refresh after that.
+        </p>
+
+        <h5>CLI</h5>
+        <ul>
+            <li><code>add-device --profile NAME</code> — fills identity after insert (blank name only).</li>
+            <li><code>refresh-snmp &lt;ip&gt;</code> — refreshes an existing device. Optional <code>--update-name</code> and <code>--profile</code> if none is linked.</li>
+            <li><code>snmp-test &lt;ip&gt; -p NAME</code> — probe only; does not write the device.</li>
+        </ul>
+    </div>
+
     <!-- Discover -->
     <div id="discover" class="mb-5">
         <h2>Discover</h2>
@@ -191,7 +239,7 @@
         </p>
         <ul>
             <li>Ping runs first; SNMP runs only on live unmanaged hosts.</li>
-            <li>Already-managed IPs appear as <strong>Already in inventory</strong> (even if ping fails) and are never overwritten.</li>
+            <li>Already-managed IPs appear as <strong>Already in inventory</strong> (even if ping fails) and are never overwritten. To update SNMP fields on those hosts, use <a href="#snmp-identity">Refresh SNMP</a>.</li>
             <li>Unmanaged hosts that do not answer ping are omitted.</li>
             <li>Credential profiles are optional and tried in the order you set (Up/Down). Zero selected means ping-only.</li>
             <li>Default building is a starting value per row. Each selected row must have a building before Save.</li>
@@ -209,23 +257,19 @@
             <li>SNMP timeout default 2 s (max 5 s); SNMP concurrency default 8 (max 16).</li>
             <li>A stuck scan is failed by a watchdog (default 900 seconds).</li>
         </ul>
-        <p>
-            <strong>Refresh from SNMP</strong> is on the device edit page, not on the Discover grid.
-            It overwrites location, vendor, and model. Name updates only if you check
-            <strong>Also update name from sysName</strong>. Comment, building, asset tag, and monitored are never changed.
-        </p>
     </div>
 
     <!-- Profiles -->
     <div id="profiles" class="mb-5">
         <h2>Credential Profiles</h2>
         <p>
-            <strong>Manage → Profiles</strong> stores SNMPv1, v2c, and v3 credentials used by Discover, Refresh from SNMP, and CLI <code>snmp-test</code>.
+            <strong>Manage → Profiles</strong> stores SNMPv1, v2c, and v3 credentials used by Discover, Add Device, Refresh from SNMP, and CLI <code>snmp-test</code> / <code>refresh-snmp</code>.
             They are not used to decide Up or Down.
         </p>
         <ul>
             <li>Username is shown in the list. Community is shown as <strong>set</strong> or <strong>not set</strong> only — never the secret itself.</li>
             <li>Auth and privacy keys are password fields. On edit, leave them blank to keep the stored value.</li>
+            <li>SNMPv3 defaults to <strong>authPriv</strong> with SHA authentication and AES privacy. The protocol and keys must match the device (SHA vs MD5 vs SHA-256, AES vs DES). A mismatch often looks like a timeout.</li>
             <li>Secrets are encrypted at rest using a key derived from <code>SECURITY__SECRET_KEY</code>. Changing that key breaks decryption until you re-enter each profile.</li>
             <li>Test probes a single IP and shows name, location, vendor, and model (or timeout / auth fail). It never echoes secrets.</li>
             <li>Deleting a profile unlinks it from devices; devices themselves are not deleted.</li>
@@ -267,7 +311,7 @@ sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory /tmp/inform
         </p>
         <p>
             <code>sys_object_id</code> is omitted from the YAML file (it is an internal cache for Refresh).
-            After import, vendor and model display from the file; run Refresh from SNMP later if you need <code>sys_object_id</code> filled in.
+            After import, vendor and model display from the file; run <a href="#snmp-identity">Refresh SNMP</a> later if you need <code>sys_object_id</code> filled in.
         </p>
 
         <h5>YAML file shape</h5>
@@ -299,11 +343,12 @@ devices:
         <h5>Common Commands</h5>
         <ul>
             <li><code>create-admin</code> — Create the initial admin user for the web interface.</li>
-            <li><code>add-device</code> — Add a new device via the command line.</li>
+            <li><code>add-device</code> — Add a new device via the command line. Optional <code>--profile</code> fills SNMP identity after insert.</li>
             <li><code>list-devices</code> — View all devices.</li>
             <li><code>edit-device &lt;ip&gt;</code> — Edit an existing device.</li>
             <li><code>search-devices &lt;term&gt;</code> — Search across multiple fields.</li>
             <li><code>add-profile</code> / <code>list-profiles</code> / <code>snmp-test</code> — Manage SNMP credentials and probe one host.</li>
+            <li><code>refresh-snmp &lt;ip&gt;</code> — Refresh vendor, model, and location on an existing device (optional <code>--update-name</code>, <code>--profile</code>).</li>
             <li><code>discover &lt;ip-or-cidr&gt;</code> — Ping then SNMP probe (optional <code>--profile</code>, <code>--confirm-public</code>). Does not write devices.</li>
             <li><code>export-inventory -o inventory.yaml</code> — Write buildings and devices to a YAML file.</li>
             <li><code>import-inventory inventory.yaml</code> — Load buildings and devices from a YAML file (optional <code>--dry-run</code>).</li>

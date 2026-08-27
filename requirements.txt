@@ -2,6 +2,7 @@ typer[all]>=0.12
 pydantic>=2.0
 sqlalchemy>=2.0
 pysnmp>=7.1,<8
+cryptography>=43
 icmplib>=3.0
 pyyaml>=6.0
 python-dotenv>=1.0
