@@ -12,7 +12,7 @@ from rich.console import Console
 from sqlalchemy.orm import Session
 
 from inform.core.database import SessionLocal
-from inform.core.models import Building, CredentialProfile, Device
+from inform.core.models import Building, CredentialProfile, Device, blank_to_none
 from inform.core.config import settings
 from inform.core.secrets import encrypt_secret
 from inform.snmp.client import apply_identity_to_device, get_device_info, identify_sync
@@ -242,6 +242,12 @@ def add_device(
             rprint(f"[red]Error:[/red] Device with IP {ip} already exists.")
             return
 
+        asset_tag = blank_to_none(asset_tag)
+        name = blank_to_none(name)
+        location = blank_to_none(location)
+        comment = blank_to_none(comment)
+        building = blank_to_none(building)
+
         # Check for duplicate Asset Tag (if provided)
         if asset_tag and db.query(Device).filter(Device.asset_tag == asset_tag).first():
             rprint(f"[red]Error:[/red] Device with Asset Tag '{asset_tag}' already exists.")
@@ -258,11 +264,11 @@ def add_device(
 
         device = Device(
             ip_address=ip,
-            asset_tag=asset_tag or None,
-            name=name or None,
-            building=building or None,
-            location=location or None,
-            comment=comment or None,
+            asset_tag=asset_tag,
+            name=name,
+            building=building,
+            location=location,
+            comment=comment,
             credential_profile_id=profile_id,
             monitored=monitored,
         )
@@ -417,11 +423,11 @@ def edit_device(ip: str = typer.Argument(..., help="IP address of the device to 
                 rprint(f"  • {b.name}")
             rprint("")
 
-        new_asset_tag = typer.prompt("Asset Tag", default=device.asset_tag or "")
-        new_name = typer.prompt("Name", default=device.name or "")
-        new_building = typer.prompt("Building", default=device.building or "")
-        new_location = typer.prompt("Location", default=device.location or "")
-        new_comment = typer.prompt("Comment / Description", default=device.comment or "")
+        new_asset_tag = blank_to_none(typer.prompt("Asset Tag", default=device.asset_tag or ""))
+        new_name = blank_to_none(typer.prompt("Name", default=device.name or ""))
+        new_building = blank_to_none(typer.prompt("Building", default=device.building or ""))
+        new_location = blank_to_none(typer.prompt("Location", default=device.location or ""))
+        new_comment = blank_to_none(typer.prompt("Comment / Description", default=device.comment or ""))
         new_monitored = typer.confirm("Monitored?", default=device.monitored)
 
         # Check for duplicate asset tag (if changed)
@@ -430,11 +436,11 @@ def edit_device(ip: str = typer.Argument(..., help="IP address of the device to 
                 rprint(f"[red]Error:[/red] Another device already has Asset Tag '{new_asset_tag}'.")
                 return
 
-        device.asset_tag = new_asset_tag or None
-        device.name = new_name or None
-        device.building = new_building or None
-        device.location = new_location or None
-        device.comment = new_comment or None
+        device.asset_tag = new_asset_tag
+        device.name = new_name
+        device.building = new_building
+        device.location = new_location
+        device.comment = new_comment
         device.monitored = new_monitored
 
         db.commit()
