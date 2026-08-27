@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
-from inform.core.models import Building, CredentialProfile, Device
+from inform.core.models import Building, CredentialProfile, Device, blank_to_none
 
 INVENTORY_VERSION = 2
 SUPPORTED_INVENTORY_VERSIONS = {1, 2}
@@ -89,15 +89,15 @@ def load_inventory_yaml(text: str) -> dict[str, Any]:
             monitored = monitored.strip().lower() in ("1", "true", "yes", "y")
         cleaned_devices.append({
             "ip_address": str(item["ip_address"]).strip(),
-            "asset_tag": str(item.get("asset_tag") or "").strip(),
-            "name": str(item.get("name") or "").strip(),
-            "building": str(item.get("building") or "").strip(),
-            "location": str(item.get("location") or "").strip(),
-            "comment": str(item.get("comment") or "").strip(),
+            "asset_tag": blank_to_none(item.get("asset_tag")) or "",
+            "name": blank_to_none(item.get("name")) or "",
+            "building": blank_to_none(item.get("building")) or "",
+            "location": blank_to_none(item.get("location")) or "",
+            "comment": blank_to_none(item.get("comment")) or "",
             "monitored": bool(monitored),
-            "vendor": str(item.get("vendor") or "").strip(),
-            "model": str(item.get("model") or "").strip(),
-            "credential_profile": str(item.get("credential_profile") or "").strip(),
+            "vendor": blank_to_none(item.get("vendor")) or "",
+            "model": blank_to_none(item.get("model")) or "",
+            "credential_profile": blank_to_none(item.get("credential_profile")) or "",
         })
 
     return {
@@ -134,7 +134,7 @@ def import_inventory(db: Session, inventory: dict[str, Any], dry_run: bool = Fal
             stats["devices_skipped"] += 1
             continue
 
-        asset_tag = item.get("asset_tag") or None
+        asset_tag = blank_to_none(item.get("asset_tag"))
         if asset_tag and db.query(Device).filter(Device.asset_tag == asset_tag).first():
             stats["devices_skipped"] += 1
             continue
