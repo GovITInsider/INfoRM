@@ -10,7 +10,7 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - **Web Management GUI** — Add, edit, and delete devices and buildings through a protected web interface
 - **On-demand Discover** — Scan one IPv4 or a CIDR (max `/24`); ping first, then SNMP live hosts; review and bulk-add
 - **Credential Profiles** — SNMPv1 / v2c / v3 credentials with a web UI and CLI
-- **SNMP identity** — Vendor and model from Discover or explicit **Refresh from SNMP**; shown on the Devices page and in Manage. Reachability stays ICMP
+- **SNMP identity** — Vendor, model, name, and location from Discover, from **Add Device** when a profile is selected, or from **Refresh SNMP**. Reachability stays ICMP
 - **Building Enforcement** — Devices must be assigned to existing buildings via dropdown
 - **Authentication** — Secure login for the management area, with 8-hour sessions that renew while you work
 - **Alarm History** — Track when devices go down and come back up
@@ -136,28 +136,44 @@ sudo -u inform ./venv/bin/python -m inform.cli.main --help
 Common commands:
 
 - `create-admin`
-- `add-device`
+- `add-device` (optional `--profile` fills SNMP identity after insert)
 - `list-devices`
 - `edit-device <ip>`
 - `search-devices <term>`
-- `add-profile` / `list-profiles` / `snmp-test` / `refresh-snmp`
+- `add-profile` / `list-profiles` / `snmp-test`
+- `refresh-snmp <ip>` (optional `--update-name`, `--profile` if none is linked)
 - `discover <ip-or-cidr>` (optional repeatable `--profile`, `--confirm-public`; probe only, does not write devices)
 - `export-inventory -o inventory.yaml`
 - `import-inventory inventory.yaml` (optional `--dry-run`)
 
-### Discover and Refresh
+### Discover
 
-**Manage → Discover** scans one IPv4 address or CIDR (max `/24`). INfoRM pings first, then SNMPs only live unmanaged hosts. Results appear in a review grid: check rows to add, edit name/location/building/comment/asset tag/monitored, and save. Already-managed IPs are listed as in inventory and are never overwritten. Zero credential profiles is allowed (ping-only). Public (non-RFC1918) targets require the **scan public space** checkbox (CLI: `--confirm-public`).
-
-The public **Devices** page (`/devices`) shows SNMP vendor and model in a compact **Vendor / Model** column after Location. Values longer than 20 characters are shortened; hover to see the full string. A dash means the device has not been discovered or refreshed yet. Search still matches the full vendor and model.
-
-**Manage → Devices** shows vendor and model as separate read-only fields. Adding a device with a credential profile queries SNMP immediately and fills vendor, model, location, and name (when name is blank). **Refresh SNMP** on a table row, or **Refresh from SNMP** on the edit form, overwrites location, vendor, and model (and `sys_object_id` internally). A blank name is filled; an existing name changes only if you check **Also update name from sysName** (CLI: `--update-name`). Comment, building, asset tag, and monitored are never changed by SNMP. The device must have a linked profile for the table button; otherwise open Edit and pick a profile first.
+**Manage → Discover** scans one IPv4 address or CIDR (max `/24`). INfoRM pings first, then SNMPs only live unmanaged hosts. Results appear in a review grid: check rows to add, edit name/location/building/comment/asset tag/monitored, and save. Already-managed IPs are listed as in inventory and are **never overwritten** — do not delete a device to pick up new SNMP fields; use Refresh instead. Zero credential profiles is allowed (ping-only). Public (non-RFC1918) targets require the **scan public space** checkbox (CLI: `--confirm-public`).
 
 CLI `discover` is a probe: it prints a table and does **not** write `devices` or scan sessions.
 
+The public **Devices** page (`/devices`) shows SNMP vendor and model in a compact **Vendor / Model** column after Location. Values longer than 20 characters are shortened; hover to see the full string. A dash means identity has not been filled yet (no profile, SNMP failed, or not yet refreshed). Search still matches the full vendor and model.
+
+### SNMP identity and Refresh
+
+SNMP is identity only (name, location, vendor, model). It does not decide Up / Pre-Alarm / Down.
+
+**Manage → Devices** shows vendor and model as read-only fields. Identity is filled in these ways:
+
+| Action | What happens |
+| --- | --- |
+| **Add Device** with a credential profile | Queries SNMP after save. Fills vendor, model, location, and name if name is blank. The device is kept even if SNMP fails. |
+| **Refresh SNMP** on a table row | Uses the linked profile. Overwrites location, vendor, and model; fills a blank name. Hidden until a profile is linked. |
+| **Refresh from SNMP** on the edit form | Same fields. Check **Also update name from sysName** to overwrite an existing name. If no profile is linked, pick one (or **Try all profiles**). |
+| CLI `add-device --profile` / `refresh-snmp` | Same rules. `--update-name` overwrites name. `--profile` is required on refresh only when none is linked. |
+
+SNMP never changes comment, building, asset tag, monitored, or IP. Assigning a profile on **Edit** and clicking **Update Device** does not query SNMP — use Refresh after that.
+
+SNMPv3 `authPriv` (the default) needs the `cryptography` Python package for AES/DES. `pycryptodomex` only encrypts secrets at rest. A missing crypto backend used to look like a timeout.
+
 ### Credential profiles
 
-**Manage → Profiles** stores SNMPv1 / v2c / v3 credentials. Community, auth key, and priv key are encrypted at rest (AES-256-GCM, key from `SECURITY__SECRET_KEY`). The UI never echoes secrets (community is shown as set / not set). Deleting a profile unlinks devices; it does not delete devices.
+**Manage → Profiles** stores SNMPv1 / v2c / v3 credentials used by Discover, Add Device, Refresh, and CLI `snmp-test` / `refresh-snmp`. Community, auth key, and priv key are encrypted at rest (AES-256-GCM, key from `SECURITY__SECRET_KEY`). The UI never echoes secrets (community is shown as set / not set). Deleting a profile unlinks devices; it does not delete devices. SNMPv3 defaults to authPriv with SHA + AES; those must match the device.
 
 ### Inventory backup / restore
 
@@ -170,7 +186,7 @@ sudo -u inform ./venv/bin/python -m inform.cli.main export-inventory -o /tmp/inf
 
 Import on the same or another INfoRM host. Existing building names and device IPs are skipped (same as `add-building` / `add-device`) — vendor, model, and profile on skipped IPs are not overwritten. Version 1 files still import (missing vendor/model/profile become empty). Version 2 files include those fields. An unknown `credential_profile` name still adds the device with the profile unset; the CLI reports `Profiles unresolved: N`. The file never contains community strings or keys.
 
-`sys_object_id` is **omitted** from YAML. It is an internal cache used by Refresh. A restore without a later Refresh leaves `sys_object_id` NULL; vendor and model in the file are enough to display.
+`sys_object_id` is **omitted** from YAML. It is an internal cache used by Refresh. A restore without a later Refresh leaves `sys_object_id` NULL; vendor and model in the file are enough to display. Use **Refresh SNMP** if you want that cache filled.
 
 ```bash
 sudo -u inform ./venv/bin/python -m inform.cli.main import-inventory --dry-run /tmp/inform-inventory.yaml
@@ -245,6 +261,16 @@ Confirm `inform-web` is listening on port 8000 (`ss -lntp | grep 8000`) and that
 
 **Logged out of `/manage` after about 15 minutes**  
 You are on a build older than 1.1.3. Update and restart `inform-web`. Session length is `security.token_expires_minutes` (default 480).
+
+**SNMPv3 `authPriv` times out; v2c works**  
+pysnmp needs the `cryptography` package for AES/DES privacy. `pycryptodomex` only encrypts stored secrets. Re-run the installer, or:
+
+```bash
+sudo -u inform /opt/inform-ng/venv/bin/pip install -r /opt/inform-ng/requirements.txt
+sudo systemctl restart inform-web
+```
+
+Also confirm the profile matches the device (username, SHA vs MD5 vs SHA-256, AES vs DES, keys). Wrong privacy protocol looks like a timeout because the agent drops the packet.
 
 ## Project Structure
 
