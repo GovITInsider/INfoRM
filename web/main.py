@@ -770,7 +770,8 @@ async def devices_page(request: Request):
 
         return templates.get_template("devices.html").render(
             request=request,
-            devices=device_list
+            devices=device_list,
+            auto_refresh_seconds=settings.web.auto_refresh_seconds,
         )
     finally:
         db.close()

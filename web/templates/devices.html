@@ -27,7 +27,7 @@
     <!-- Search -->
     <div class="input-group" style="width: 260px; max-width: 100%;">
         <span class="input-group-text">🔍</span>
-        <input type="text" class="form-control" id="searchInput" placeholder="Search devices..." onkeyup="filterTable()">
+        <input type="text" class="form-control" id="searchInput" placeholder="Search devices..." oninput="filterTable()">
     </div>
 
     <!-- Monitored Filter -->
@@ -169,6 +169,53 @@
 {% block extra_scripts %}
 
 <script>
+// Remember search, monitored filter, and the auto-refresh switch for this tab.
+const DEVICES_VIEW_KEY = 'inform.devices.view';
+
+function readSavedView() {
+    try {
+        const raw = sessionStorage.getItem(DEVICES_VIEW_KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        return data && typeof data === 'object' ? data : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+function saveView() {
+    const searchInput = document.getElementById('searchInput');
+    const monitoredSelect = document.getElementById('monitoredFilter');
+    const refreshToggle = document.getElementById('autoRefreshToggle');
+    const payload = {
+        search: searchInput ? searchInput.value : '',
+        monitored: monitoredSelect ? monitoredSelect.value : 'all',
+        autoRefresh: refreshToggle ? refreshToggle.checked : true,
+    };
+    try {
+        sessionStorage.setItem(DEVICES_VIEW_KEY, JSON.stringify(payload));
+    } catch (err) {
+        // Private mode or a full quota. Filtering still works for this load.
+    }
+}
+
+function restoreView() {
+    const saved = readSavedView();
+    if (!saved) return;
+    const searchInput = document.getElementById('searchInput');
+    const monitoredSelect = document.getElementById('monitoredFilter');
+    const refreshToggle = document.getElementById('autoRefreshToggle');
+    if (searchInput && typeof saved.search === 'string') {
+        searchInput.value = saved.search;
+    }
+    if (monitoredSelect && (saved.monitored === 'all' || saved.monitored === 'yes' || saved.monitored === 'no')) {
+        monitoredSelect.value = saved.monitored;
+    }
+    if (refreshToggle && typeof saved.autoRefresh === 'boolean') {
+        refreshToggle.checked = saved.autoRefresh;
+    }
+}
+
 // Search + Monitored Filter
 function filterTable() {
     const searchFilter = document.getElementById('searchInput').value.toLowerCase();
@@ -202,6 +249,7 @@ function filterTable() {
 
         row.style.display = (searchMatch && monitoredMatch) ? '' : 'none';
     });
+    saveView();
 }
 
 // Column Sorting
@@ -296,6 +344,7 @@ function stopAutoRefresh() {
 
 function toggleAutoRefresh() {
     autoRefreshEnabled = toggle.checked;
+    saveView();
     if (autoRefreshEnabled) {
         startAutoRefresh();
     } else {
@@ -304,15 +353,18 @@ function toggleAutoRefresh() {
     }
 }
 
+restoreView();
+filterTable();
+
 if (toggle) {
     toggle.addEventListener('change', toggleAutoRefresh);
 
-    // Initialize on page load
+    // Initialize on page load, after any saved on/off choice is restored.
     autoRefreshEnabled = toggle.checked;
     if (autoRefreshEnabled) {
         startAutoRefresh();
     } else {
-        updateStatusText();   // ← This line ensures it shows OFF when unchecked
+        updateStatusText();
     }
 }
 

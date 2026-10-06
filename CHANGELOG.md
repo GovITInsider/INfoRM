@@ -1,3 +1,11 @@
+## [1.2.2] - 2026-10-06
+
+### Changed
+- Public Devices page keeps the search text, Monitored / Unmonitored filter, and auto-refresh on/off choice across a refresh in the same browser tab
+
+### Fixed
+- Devices auto-refresh now uses `web.auto_refresh_seconds`. The page was not given that setting, so the timer fell back to 16 seconds.
+
 ## [1.2.1] - 2026-08-27
 
 ### Added
