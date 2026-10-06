@@ -24,6 +24,11 @@ web:
   auto_refresh_seconds: 30
   noc_auto_refresh_seconds: 30
   local_timezone: "America/Los_Angeles"
+  # Public navbar links. An empty list hides the External Links menu.
+  # This file is not replaced by an update. Restart inform-web after editing.
+  external_links: []
+  # - name: Tickets
+  #   url: https://tickets.example.com
 
 security:
   secret_key: "CHANGE_ME_IN_.env"     # ← placeholder only

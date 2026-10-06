@@ -108,6 +108,7 @@ templates = Environment(
 )
 templates.globals["app_version"] = __version__
 templates.globals["discovery_enabled"] = settings.discovery.enabled
+templates.globals["external_links"] = settings.web.external_links
 
 # enable url_for in templates
 templates.globals["url_for"] = app.url_path_for

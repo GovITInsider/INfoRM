@@ -100,6 +100,7 @@ Useful `config.yaml` keys:
 
 - `monitoring.poll_interval_seconds` — how often devices are pinged
 - `web.noc_auto_refresh_seconds` / `web.auto_refresh_seconds` — public page refresh
+- `web.external_links` — navbar links (`name` and an `http`/`https` `url`). An empty list hides the menu. Restart `inform-web` after editing. Updates do not replace `config/config.yaml`.
 - `security.token_expires_minutes` — admin session lifetime (default `480` = 8 hours; renewed on each manage-page request)
 - `discovery.enabled` — when `false`, hides **Manage → Discover** and rejects CLI `discover`. Profiles and Refresh stay available (kill switch if a scan is mistaken for an attack)
 
@@ -296,4 +297,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.2.2
+Current version: 1.2.3

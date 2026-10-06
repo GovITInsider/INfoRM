@@ -65,16 +65,18 @@
         		<a class="nav-link {% if request.url.path.startswith('/manage') %}active{% endif %}" href="/manage">Admin</a>
     		</li>
 
-    		<!-- External Links Dropdown ADD/REMOVE Links here -->
+    		{% if external_links %}
     		<li class="nav-item dropdown">
         		<a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
             			External Links
         		</a>
         		<ul class="dropdown-menu dropdown-menu-end">
-				<li><a class="dropdown-item" href="https://github.com" target="_blank">GITHUB</a></li>
-				<li><a class="dropdown-item" href="https://opensource.org/license/MIT" target="_blank">Open Source Initiative</a></li>
+				{% for link in external_links %}
+				<li><a class="dropdown-item" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.name }}</a></li>
+				{% endfor %}
         		</ul>
     		</li>
+    		{% endif %}
 	   </ul>
         </div>
     </div>

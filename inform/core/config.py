@@ -1,8 +1,9 @@
 from pathlib import Path
+from urllib.parse import urlparse
+
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
 
 # ========================
 # Nested Settings
@@ -11,9 +12,36 @@ class SecuritySettings(BaseModel):
     secret_key: str
     token_expires_minutes: int = 480
 
+class ExternalLink(BaseModel):
+    """One public navbar link. Stored in config.yaml so updates do not wipe it."""
+
+    name: str
+    url: str
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("external link name is empty")
+        if len(cleaned) > 80:
+            raise ValueError("external link name is longer than 80 characters")
+        return cleaned
+
+    @field_validator("url")
+    @classmethod
+    def http_url(cls, value: str) -> str:
+        cleaned = value.strip()
+        parsed = urlparse(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("external link url must start with http:// or https://")
+        return cleaned
+
+
 class WebSettings(BaseModel):
     auto_refresh_seconds: int = 30
     noc_auto_refresh_seconds: int = 30
+    external_links: list[ExternalLink] = Field(default_factory=list)
 
 class GeneralSettings(BaseModel):
     log_level: str = "INFO"

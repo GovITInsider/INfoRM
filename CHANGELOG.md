@@ -1,3 +1,8 @@
+## [1.2.3] - 2026-10-06
+
+### Changed
+- The navbar External Links menu reads `web.external_links` from `config/config.yaml`. An empty list hides the menu. Site links survive an update because that file is not replaced.
+
 ## [1.2.2] - 2026-10-06
 
 ### Changed

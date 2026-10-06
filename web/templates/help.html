@@ -29,6 +29,7 @@
             <li><a href="#noc-view">The NOC View</a></li>
             <li><a href="#alarm-history">Alarm History</a></li>
             <li><a href="#auto-refresh">Auto-Refresh Behavior</a></li>
+            <li><a href="#external-links">External Links</a></li>
             <li><a href="#management-gui">Management GUI</a></li>
             <li><a href="#snmp-identity">SNMP Identity and Refresh</a></li>
             <li><a href="#discover">Discover</a></li>
@@ -142,6 +143,17 @@
             <li><strong>Devices Page:</strong> Auto-refresh is on by default but can be disabled manually. Search, the monitored filter, and that on/off choice stay in place when the page refreshes, until the browser tab is closed.</li>
             <li><strong>Landing Page:</strong> Does not auto-refresh.</li>
         </ul>
+    </div>
+
+    <!-- External Links -->
+    <div id="external-links" class="mb-5">
+        <h2>External Links</h2>
+        <p>
+            The navbar menu is filled from <code>web.external_links</code> in <code>config/config.yaml</code>.
+            Each entry has a <code>name</code> and an <code>http</code> or <code>https</code> <code>url</code>.
+            An empty list hides the menu. Restart <code>inform-web</code> after editing the file.
+            An update does not replace <code>config/config.yaml</code>.
+        </p>
     </div>
 
     <!-- Management GUI -->
