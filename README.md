@@ -297,4 +297,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.2.4
+Current version: 1.2.5

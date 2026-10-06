@@ -1,3 +1,8 @@
+## [1.2.5] - 2026-10-06
+
+### Fixed
+- Browser refresh seconds are read from `config.yaml` even when the `web:` block is indented under another section, or when a second `web:` block would have replaced it. The loaded settings no longer fall back to 30 after the file is applied.
+
 ## [1.2.4] - 2026-10-06
 
 ### Fixed
