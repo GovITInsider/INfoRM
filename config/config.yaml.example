@@ -21,6 +21,7 @@ monitoring:
   poll_interval_seconds: 30
 
 web:
+  # Browser reload interval. monitoring.poll_interval_seconds is the ping loop.
   auto_refresh_seconds: 30
   noc_auto_refresh_seconds: 30
   local_timezone: "America/Los_Angeles"

@@ -41,6 +41,7 @@ class ExternalLink(BaseModel):
 class WebSettings(BaseModel):
     auto_refresh_seconds: int = 30
     noc_auto_refresh_seconds: int = 30
+    local_timezone: str = "America/Los_Angeles"
     external_links: list[ExternalLink] = Field(default_factory=list)
 
 class GeneralSettings(BaseModel):
@@ -86,6 +87,18 @@ def get_config_path() -> Path:
     return Path(__file__).parent.parent.parent / "config" / "config.yaml"
 
 
+# Nested models. YAML for these sections is applied after Settings() is built.
+_SECTIONS = (
+    ("security", SecuritySettings),
+    ("web", WebSettings),
+    ("general", GeneralSettings),
+    ("discovery", DiscoverySettings),
+    ("logging", LoggingSettings),
+    ("monitoring", MonitoringSettings),
+)
+_PLACEHOLDER_SECRETS = {"", "CHANGE_ME_IN_.env"}
+
+
 def load_settings() -> Settings:
     config_path = get_config_path()
     raw_config = {}
@@ -96,7 +109,29 @@ def load_settings() -> Settings:
     else:
         print(f"Warning: Config file not found at {config_path}. Using defaults + .env")
 
-    return Settings(**raw_config)
+    if not isinstance(raw_config, dict):
+        raise ValueError(f"{config_path} must contain a mapping")
+
+    # Build from the environment and field defaults first, then copy each
+    # config.yaml section on top. Passing the file into Settings() drops
+    # nested values on some pydantic-settings builds, so a configured
+    # auto_refresh_seconds of 20 still came back as the default 30.
+    settings = Settings()
+    for name, model_cls in _SECTIONS:
+        incoming = raw_config.get(name)
+        if not isinstance(incoming, dict):
+            continue
+        incoming = dict(incoming)
+        if name == "security":
+            secret = incoming.get("secret_key")
+            if secret in _PLACEHOLDER_SECRETS:
+                incoming.pop("secret_key", None)
+        if not incoming:
+            continue
+        current = getattr(settings, name).model_dump()
+        current.update(incoming)
+        setattr(settings, name, model_cls.model_validate(current))
+    return settings
 
 
 settings = load_settings()

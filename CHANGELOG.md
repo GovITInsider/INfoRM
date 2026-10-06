@@ -1,3 +1,9 @@
+## [1.2.4] - 2026-10-06
+
+### Fixed
+- Nested `config.yaml` values were ignored, so `web.auto_refresh_seconds` and `web.noc_auto_refresh_seconds` stayed at 30. Those sections are applied after settings are built.
+- `web.local_timezone` is read from `config.yaml`.
+
 ## [1.2.3] - 2026-10-06
 
 ### Changed
