@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from collections import defaultdict
 
-from inform.core.database import SessionLocal, ensure_db_permissions, ensure_schema
+from inform.core.database import SessionLocal, engine, ensure_db_permissions, ensure_schema
 from inform.snmp.scan import (
     cancel_current_scan,
     fail_interrupted_sessions,
@@ -30,6 +30,7 @@ from inform.core.models import (
     DiscoveryJob,
     ScanResult,
     ScanSession,
+    User,
     blank_to_none,
 )
 from inform.core.config import settings
@@ -41,6 +42,16 @@ from inform.core.auth import (
     issue_session,
     clear_session,
     username_from_token,
+)
+from inform.core.accounts import (
+    MAX_ACCOUNTS,
+    AccountError,
+    change_own_password,
+    create_account,
+    list_accounts,
+    remove_account,
+    reset_password,
+    set_account_manager,
 )
 from inform.core.inventory import build_inventory, dump_inventory_yaml
 from inform.core.secrets import encrypt_secret
@@ -112,6 +123,69 @@ templates.globals["external_links"] = settings.web.external_links
 
 # enable url_for in templates
 templates.globals["url_for"] = app.url_path_for
+
+
+class AccountManagerRequired(Exception):
+    """Signed-in user is not an account manager."""
+
+
+def manage_redirect(path: str, *, success: str | None = None, error: str | None = None):
+    params = {}
+    if success:
+        params["success"] = success
+    if error:
+        params["error"] = error
+    if params:
+        path = f"{path}?{urlencode(params)}"
+    return RedirectResponse(url=path, status_code=302)
+
+
+def _session_user(request: Request):
+    """Load the signed-in account without opening a second writer transaction.
+
+    Manage pages already hold a SessionLocal() transaction (BEGIN IMMEDIATE).
+    Another SessionLocal() would wait on that lock until the page closed it.
+    """
+    username = username_from_token(request.cookies.get("access_token"))
+    if not username:
+        return None
+    raw = engine.raw_connection()
+    try:
+        cur = raw.cursor()
+        cur.execute(
+            "SELECT id, username, is_account_manager FROM users WHERE username = ?",
+            (username,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    finally:
+        raw.close()
+    if row is None:
+        return None
+    return User(
+        id=row[0],
+        username=row[1],
+        hashed_password="",
+        is_account_manager=bool(row[2]),
+    )
+
+
+def render_manage(request: Request, template_name: str, **ctx) -> str:
+    ctx.setdefault("user", _session_user(request))
+    ctx["request"] = request
+    return templates.get_template(template_name).render(**ctx)
+
+
+def require_account_manager(user=Depends(manager)):
+    if not user.is_account_manager:
+        raise AccountManagerRequired()
+    return user
+
+
+@app.exception_handler(AccountManagerRequired)
+async def account_manager_required(request: Request, exc: AccountManagerRequired):
+    return manage_redirect("/manage", error="Only an account manager can do that.")
+
 
 # ========================
 # Helper
@@ -241,8 +315,9 @@ def _render_profiles_page(request, db, *, error=None, test_result=None, edit_id=
         edit_profile = next((p for p in pubs if p["id"] == edit_id), None)
     if form is None:
         form = _form_from_public(edit_profile) if edit_profile else {}
-    return templates.get_template("manage/profiles.html").render(
-        request=request,
+    return render_manage(
+        request,
+        "manage/profiles.html",
         profiles=pubs,
         edit_profile=edit_profile,
         form=form,
@@ -587,8 +662,9 @@ def _render_discover_page(
     payload = _scan_status_payload(session)
     scan_busy = session is not None and session.status in ("running", "cancelling")
     rows = _review_rows(db, session, posted_form)
-    return templates.get_template("manage/discover.html").render(
-        request=request,
+    return render_manage(
+        request,
+        "manage/discover.html",
         buildings=buildings,
         profiles=form_profiles,
         form=form,
@@ -871,6 +947,127 @@ async def logout():
 
 
 # ========================
+# Accounts
+# ========================
+
+@app.get("/manage/password", response_class=HTMLResponse)
+async def password_page(request: Request, user=Depends(manager)):
+    return render_manage(request, "manage/password.html", user=user)
+
+
+@app.post("/manage/password")
+async def password_change(
+    current_password: str = Form(""),
+    new_password: str = Form(""),
+    confirm_password: str = Form(""),
+    user=Depends(manager),
+):
+    db = SessionLocal()
+    try:
+        change_own_password(db, user, current_password, new_password, confirm_password)
+    except AccountError as exc:
+        return manage_redirect("/manage/password", error=exc.message)
+    finally:
+        db.close()
+    return manage_redirect("/manage/password", success="Password changed.")
+
+
+@app.get("/manage/users", response_class=HTMLResponse)
+async def manage_users(request: Request, user=Depends(require_account_manager)):
+    db = SessionLocal()
+    try:
+        people = list_accounts(db)
+        manager_count = sum(1 for person in people if person.is_account_manager)
+        return render_manage(
+            request,
+            "manage/users.html",
+            user=user,
+            people=people,
+            max_accounts=MAX_ACCOUNTS,
+            manager_count=manager_count,
+        )
+    finally:
+        db.close()
+
+
+@app.post("/manage/users")
+async def add_account(
+    username: str = Form(""),
+    password: str = Form(""),
+    account_manager: str = Form(""),
+    user=Depends(require_account_manager),
+):
+    db = SessionLocal()
+    try:
+        create_account(
+            db,
+            username,
+            password,
+            account_manager=account_manager == "1",
+            actor=user,
+        )
+    except AccountError as exc:
+        return manage_redirect("/manage/users", error=exc.message)
+    finally:
+        db.close()
+    return manage_redirect("/manage/users", success="Account created.")
+
+
+@app.post("/manage/users/{user_id}/password")
+async def reset_user_password(
+    user_id: int,
+    password: str = Form(""),
+    user=Depends(require_account_manager),
+):
+    db = SessionLocal()
+    try:
+        reset_password(db, user, user_id, password)
+    except AccountError as exc:
+        return manage_redirect("/manage/users", error=exc.message)
+    finally:
+        db.close()
+    return manage_redirect(
+        "/manage/users",
+        success="Password reset. That person's current session stays valid until it expires.",
+    )
+
+
+@app.post("/manage/users/{user_id}/delete")
+async def remove_user_account(user_id: int, user=Depends(require_account_manager)):
+    db = SessionLocal()
+    try:
+        remove_account(db, user, user_id)
+    except AccountError as exc:
+        return manage_redirect("/manage/users", error=exc.message)
+    finally:
+        db.close()
+    return manage_redirect("/manage/users", success="Account removed.")
+
+
+@app.post("/manage/users/{user_id}/manager")
+async def update_account_manager_flag(
+    user_id: int,
+    account_manager: str = Form(""),
+    user=Depends(require_account_manager),
+):
+    if account_manager not in {"0", "1"}:
+        return manage_redirect(
+            "/manage/users",
+            error="Choose whether this account is an account manager.",
+        )
+    db = SessionLocal()
+    try:
+        set_account_manager(db, user, user_id, account_manager == "1")
+    except AccountError as exc:
+        return manage_redirect("/manage/users", error=exc.message)
+    finally:
+        db.close()
+    if user.id == user_id and account_manager == "0":
+        return manage_redirect("/manage", success="You are no longer an account manager.")
+    return manage_redirect("/manage/users", success="Account updated.")
+
+
+# ========================
 # Protected Route 
 # ========================
 
@@ -886,8 +1083,9 @@ async def manage_dashboard(request: Request):
     except Exception:
         return RedirectResponse(url="/manage/login", status_code=302)
 
-    return templates.get_template("manage/dashboard.html").render(
-        request=request,
+    return render_manage(
+        request,
+        "manage/dashboard.html",
         user=user,
         session_hours=max(1, int(settings.security.token_expires_minutes / 60)),
     )
@@ -923,8 +1121,9 @@ async def manage_buildings(request: Request, edit: int = None, user=Depends(mana
         if edit:
             edit_building = db.query(Building).filter(Building.id == edit).first()
 
-        return templates.get_template("manage/buildings.html").render(
-            request=request,
+        return render_manage(
+            request,
+            "manage/buildings.html",
             buildings=buildings,
             edit_building=edit_building
         )
@@ -949,8 +1148,9 @@ async def add_or_update_building(
             existing = db.query(Building).filter(Building.name == name).first()
             if existing:
                 buildings = db.query(Building).order_by(Building.name).all()
-                return templates.get_template("manage/buildings.html").render(
-                    request=request,
+                return render_manage(
+                    request,
+                    "manage/buildings.html",
                     buildings=buildings,
                     error=f"Building '{name}' already exists."
                 )
@@ -1194,8 +1394,9 @@ async def manage_devices(request: Request, edit: int = None, user=Depends(manage
         profiles = _device_form_profiles(db)
         edit_device = db.query(Device).filter(Device.id == edit).first() if edit else None
 
-        return templates.get_template("manage/devices.html").render(
-            request=request,
+        return render_manage(
+            request,
+            "manage/devices.html",
             devices=devices,
             buildings=buildings,
             profiles=profiles,
@@ -1247,8 +1448,9 @@ async def save_device(
                 devices = db.query(Device).order_by(Device.ip_address).all()
                 buildings = db.query(Building).order_by(Building.name).all()
                 profiles = _device_form_profiles(db)
-                return templates.get_template("manage/devices.html").render(
-                    request=request,
+                return render_manage(
+                    request,
+                    "manage/devices.html",
                     devices=devices,
                     buildings=buildings,
                     profiles=profiles,
@@ -1275,8 +1477,9 @@ async def save_device(
                 devices = db.query(Device).order_by(Device.ip_address).all()
                 buildings = db.query(Building).order_by(Building.name).all()
                 profiles = _device_form_profiles(db)
-                return templates.get_template("manage/devices.html").render(
-                    request=request,
+                return render_manage(
+                    request,
+                    "manage/devices.html",
                     devices=devices,
                     buildings=buildings,
                     profiles=profiles,
@@ -1320,8 +1523,9 @@ async def save_device(
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
         profiles = _device_form_profiles(db)
-        html = templates.get_template("manage/devices.html").render(
-            request=request,
+        html = render_manage(
+            request,
+            "manage/devices.html",
             devices=devices,
             buildings=buildings,
             profiles=profiles,
@@ -1333,8 +1537,9 @@ async def save_device(
         devices = db.query(Device).order_by(Device.ip_address).all()
         buildings = db.query(Building).order_by(Building.name).all()
         profiles = _device_form_profiles(db)
-        html = templates.get_template("manage/devices.html").render(
-            request=request,
+        html = render_manage(
+            request,
+            "manage/devices.html",
             devices=devices,
             buildings=buildings,
             profiles=profiles,

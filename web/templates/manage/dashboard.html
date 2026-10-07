@@ -9,7 +9,14 @@
             <div class="card-body">
                 <h4 class="card-title">Welcome to INfoRM Management</h4>
                 <p class="card-text">
-                    Use the navigation bar above to manage Buildings, Devices, Discover, and SNMP credential Profiles.
+                    Signed in as <strong>{{ user.username | e }}</strong>{% if user.is_account_manager %} (account manager){% endif %}.
+                </p>
+                <p class="card-text">
+                    Use the navigation bar above to manage buildings, devices, discovery, and SNMP credential profiles.
+                    Change your password on the <a href="/manage/password">Password</a> page.
+                    {% if user.is_account_manager %}
+                    Add or remove logins under <a href="/manage/users">Users</a>.
+                    {% endif %}
                 </p>
                 <p class="card-text">
                     <a href="/manage/export" class="btn btn-outline-secondary btn-sm">Export inventory</a>

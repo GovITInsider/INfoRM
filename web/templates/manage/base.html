@@ -28,6 +28,14 @@
                 <li class="nav-item">
                     <a class="nav-link {% if request.url.path.startswith('/manage/profiles') %}active{% endif %}" href="/manage/profiles">Profiles</a>
                 </li>
+                {% if user and user.is_account_manager %}
+                <li class="nav-item">
+                    <a class="nav-link {% if request.url.path.startswith('/manage/users') %}active{% endif %}" href="/manage/users">Users</a>
+                </li>
+                {% endif %}
+                <li class="nav-item">
+                    <a class="nav-link {% if request.url.path == '/manage/password' %}active{% endif %}" href="/manage/password">Password</a>
+                </li>
             </ul>
             <div class="d-flex gap-2">
                 <a href="/manage/export" class="btn btn-outline-light btn-sm">Export inventory</a>

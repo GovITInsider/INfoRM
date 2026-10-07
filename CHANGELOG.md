@@ -1,3 +1,16 @@
+## [1.3.0] - 2026-10-06
+
+### Added
+- **Manage → Users** for account managers: add, remove, and reset passwords, and grant or remove the account-manager flag. The cap is 10 accounts in the UI and in `create-admin`
+- **Password** page so any signed-in user can change their own password after entering the current one
+- Account-manager flag. Signed-in users manage buildings, devices, discovery, profiles, and inventory. Only an account manager can create, remove, or reset other accounts. The server checks the flag
+- Existing accounts, including those created earlier by `create-admin`, become account managers on startup. New accounts are normal unless marked. `create-admin` still creates an account manager
+
+### Notes
+- You cannot remove the account you are signed in as, and at least one account manager has to remain
+- A removed account loses access on the next request. A password reset does not revoke a session cookie that is already issued
+- `create-admin` exits with an error when it does not create the account
+
 ## [1.2.5] - 2026-10-06
 
 ### Fixed

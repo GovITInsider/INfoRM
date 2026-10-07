@@ -1,0 +1,124 @@
+{% extends "manage/base.html" %}
+
+{% block manage_title %}Users{% endblock %}
+
+{% block manage_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Users</h2>
+</div>
+
+<p class="text-muted">
+    {{ people | length }} of {{ max_accounts }} accounts.
+    Signed-in accounts can manage buildings, devices, discovery, profiles, and inventory.
+    Only an account manager can add, remove, or reset other accounts.
+    At least one account manager has to remain.
+</p>
+
+{% if people | length < max_accounts %}
+<div class="card mb-4">
+    <div class="card-header">
+        <strong>Add an account</strong>
+    </div>
+    <div class="card-body">
+        <form method="post" action="/manage/users" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label" for="username">Username</label>
+                <input type="text" name="username" id="username" class="form-control"
+                       required autocomplete="off" spellcheck="false">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="password">Password</label>
+                <input type="password" name="password" id="password" class="form-control"
+                       required autocomplete="new-password">
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" name="account_manager" value="1" id="account-manager">
+                    <label class="form-check-label" for="account-manager">Account manager</label>
+                </div>
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">Add account</button>
+            </div>
+            <div class="col-12">
+                <p class="text-muted small mb-0">
+                    Usernames are 2 to 32 characters, stored in lowercase, and start with a letter.
+                    Then letters, digits, . _ or -. Passwords are 8 to 200 characters.
+                </p>
+            </div>
+        </form>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-warning">The team is at the {{ max_accounts }} account limit. Remove one to add another.</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <strong>Accounts</strong>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Username</th>
+                        <th>Access</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for person in people %}
+                    <tr>
+                        <td>{{ person.username | e }}</td>
+                        <td>
+                            {% if person.is_account_manager %}
+                            <span class="badge text-bg-secondary">Account manager</span>
+                            {% else %}
+                            <span class="badge text-bg-dark">User</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <div class="d-flex flex-wrap gap-2 justify-content-end">
+                                <form method="post" action="/manage/users/{{ person.id }}/password" class="d-flex gap-2">
+                                    <input type="password" name="password" class="form-control form-control-sm"
+                                           placeholder="New password" autocomplete="new-password" required
+                                           style="width: 11rem" aria-label="New password for {{ person.username | e }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">Reset password</button>
+                                </form>
+                                {% if person.is_account_manager %}
+                                    {% if manager_count > 1 %}
+                                    <form method="post" action="/manage/users/{{ person.id }}/manager">
+                                        <input type="hidden" name="account_manager" value="0">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">Remove account manager</button>
+                                    </form>
+                                    {% endif %}
+                                {% else %}
+                                    <form method="post" action="/manage/users/{{ person.id }}/manager">
+                                        <input type="hidden" name="account_manager" value="1">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">Make account manager</button>
+                                    </form>
+                                {% endif %}
+                                {% if user and person.id != user.id and not (person.is_account_manager and manager_count <= 1) %}
+                                <form method="post" action="/manage/users/{{ person.id }}/delete">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                            onclick="return confirm('Remove this account?');">
+                                        Remove
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<p class="text-muted small mt-3 mb-0">
+    A password reset does not sign that person out. Their current session lasts until it expires or they log out.
+    Removing an account takes effect on their next request.
+</p>
+{% endblock %}

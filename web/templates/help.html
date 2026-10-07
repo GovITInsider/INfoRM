@@ -31,6 +31,7 @@
             <li><a href="#auto-refresh">Auto-Refresh Behavior</a></li>
             <li><a href="#external-links">External Links</a></li>
             <li><a href="#management-gui">Management GUI</a></li>
+            <li><a href="#accounts">Accounts</a></li>
             <li><a href="#snmp-identity">SNMP Identity and Refresh</a></li>
             <li><a href="#discover">Discover</a></li>
             <li><a href="#profiles">Credential Profiles</a></li>
@@ -176,6 +177,8 @@
             <li><strong>Devices</strong> — Add, edit, and delete devices. When adding or editing a device, you must select a building from the dropdown list (only existing buildings are allowed). Vendor and model are read-only; see <a href="#snmp-identity">SNMP Identity and Refresh</a>.</li>
             <li><strong>Discover</strong> — Scan an IPv4 address or subnet and bulk-add live hosts (see <a href="#discover">Discover</a>). Hidden when <code>discovery.enabled</code> is false.</li>
             <li><strong>Profiles</strong> — SNMPv1 / v2c / v3 credentials used for identity lookup, not for health checks (see <a href="#profiles">Credential Profiles</a>).</li>
+            <li><strong>Users</strong> — Account managers add, remove, and reset accounts, up to 10 (see <a href="#accounts">Accounts</a>).</li>
+            <li><strong>Password</strong> — Change the password for the account you are signed in as.</li>
             <li><strong>Export inventory</strong> — Download a YAML backup of all buildings and devices (see <a href="#inventory">Inventory Export and Import</a>).</li>
         </ul>
 
@@ -189,9 +192,28 @@
 
         <h5>Notes</h5>
         <ul>
-            <li>The Management GUI requires login and is only available to authorized administrators.</li>
+            <li>The Management GUI requires login. Signed-in accounts can manage the network. Only an account manager can add or remove accounts (see <a href="#accounts">Accounts</a>).</li>
             <li>Changes made in the Management GUI are picked up automatically by the monitoring system.</li>
             <li>The CLI is still available for scripting or advanced use cases, but the web interface is recommended for most day-to-day management.</li>
+        </ul>
+    </div>
+
+    <!-- Accounts -->
+    <div id="accounts" class="mb-5">
+        <h2>Accounts</h2>
+        <p>
+            Management accounts are capped at <strong>10</strong>.
+            Anyone who signs in can manage buildings, devices, discovery, profiles, and inventory export.
+            Only an account manager can open <strong>Users</strong> to add an account, mark another account manager, reset someone else's password, or remove an account.
+        </p>
+        <ul>
+            <li><code>create-admin</code> creates an account manager and counts toward the cap of 10. Use it for the first account and for shell recovery.</li>
+            <li>New accounts are normal users unless an account manager checks <strong>Account manager</strong>.</li>
+            <li>Accounts that already exist, including the one from <code>create-admin</code>, are account managers.</li>
+            <li>You cannot remove the account you are signed in as. At least one account manager has to remain.</li>
+            <li>Every signed-in user can change their own password on the <strong>Password</strong> page. Enter the current password first.</li>
+            <li>New usernames are stored in lowercase. They are 2 to 32 characters, start with a letter, and then use letters, digits, <code>.</code> <code>_</code> or <code>-</code>. Passwords are 8 to 200 characters. Existing usernames stay as stored.</li>
+            <li>Removing an account takes effect on the next request. Resetting a password does not end a session that is already open. That session lasts until it expires (8 hours by default) or the person logs out.</li>
         </ul>
     </div>
 
@@ -354,7 +376,7 @@ devices:
 
         <h5>Common Commands</h5>
         <ul>
-            <li><code>create-admin</code> — Create the initial admin user for the web interface.</li>
+            <li><code>create-admin</code> — Create an account manager for the web interface (10 accounts maximum).</li>
             <li><code>add-device</code> — Add a new device via the command line. Optional <code>--profile</code> fills SNMP identity after insert.</li>
             <li><code>list-devices</code> — View all devices.</li>
             <li><code>edit-device &lt;ip&gt;</code> — Edit an existing device.</li>

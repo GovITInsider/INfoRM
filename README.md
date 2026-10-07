@@ -12,7 +12,7 @@ INfoRM is a modern, lightweight network monitoring tool designed to provide clea
 - **Credential Profiles** — SNMPv1 / v2c / v3 credentials with a web UI and CLI
 - **SNMP identity** — Vendor, model, name, and location from Discover, from **Add Device** when a profile is selected, or from **Refresh SNMP**. Reachability stays ICMP
 - **Building Enforcement** — Devices must be assigned to existing buildings via dropdown
-- **Authentication** — Secure login for the management area, with 8-hour sessions that renew while you work
+- **Authentication** — Named management accounts, capped at 10. Account managers add and remove logins; every signed-in account can manage the network. Sessions last 8 hours and renew while you work
 - **Alarm History** — Track when devices go down and come back up
 - **Inventory export / import** — YAML v2 backup of buildings and devices (vendor, model, profile name; no secrets)
 - **CLI Tools** — Still available for scripting and advanced use cases
@@ -74,12 +74,16 @@ sudo nano /opt/inform-ng/.env
 
 A secret key is generated automatically. `SECURITY__SECRET_KEY` signs admin session cookies **and** encrypts SNMP credential secrets at rest. Replacing it logs everyone out **and** makes existing community / auth / priv values undecryptable until you re-enter them on each profile. There is no re-encrypt CLI; do not rotate the key without re-entering profiles.
 
-### Create Admin User
+### Create the first account
 
 ```bash
 cd /opt/inform-ng
 sudo -u inform ./venv/bin/python -m inform.cli.main create-admin
 ```
+
+This creates an account manager. The management UI holds 10 accounts in total. Anyone who signs in can manage buildings, devices, discovery, profiles, and inventory. Only an account manager can open **Manage → Users** to add an account, mark another account manager, reset a password, or remove an account. A signed-in user changes their own password under **Password**.
+
+`create-admin` stays available for shell recovery. It always creates an account manager, and it counts toward the same cap of 10. New usernames are stored in lowercase: 2 to 32 characters, starting with a letter, then letters, digits, `.`, `_`, or `-`. Passwords are 8 to 200 characters. Accounts that already exist keep the names they have.
 
 ### Access the Web Interface
 
@@ -125,7 +129,7 @@ The monitor process pings via `/usr/bin/ping` (the `inform` user is unprivileged
 
 ### Management GUI (Recommended)
 
-The web interface at `/manage` is the easiest way to manage buildings, devices, SNMP profiles, and discovery. Add buildings first; devices must be assigned to an existing building. SNMP is used only to identify vendor/model/name/location — **not** for Up / Down health.
+The web interface at `/manage` is the easiest way to manage buildings, devices, SNMP profiles, discovery, and accounts. Add buildings first; devices must be assigned to an existing building. SNMP is used only to identify vendor/model/name/location — **not** for Up / Down health. Account managers use **Users** for logins. Every signed-in account uses **Password** to change their own password.
 
 ### CLI Tools
 
@@ -136,7 +140,7 @@ sudo -u inform ./venv/bin/python -m inform.cli.main --help
 
 Common commands:
 
-- `create-admin`
+- `create-admin` — create an account manager (10 accounts maximum)
 - `add-device` (optional `--profile` fills SNMP identity after insert)
 - `list-devices`
 - `edit-device <ip>`
@@ -297,4 +301,4 @@ INfoRM/
 This project is licensed under the MIT License (LICENSE).
 
 ## Version
-Current version: 1.2.5
+Current version: 1.3.0

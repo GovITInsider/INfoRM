@@ -96,6 +96,8 @@ def migrate_schema() -> None:
         _add_column(conn, "credential_profiles", "security_level", "VARCHAR(20) DEFAULT 'authPriv'")
         _add_column(conn, "credential_profiles", "community", "TEXT")
         _add_column(conn, "scan_sessions", "timeout_requested", "BOOLEAN DEFAULT 0")
+        # Rows that already exist become account managers. Later inserts set the flag.
+        _add_column(conn, "users", "is_account_manager", "BOOLEAN NOT NULL DEFAULT 1")
         conn.execute(text(
             "UPDATE credential_profiles SET snmp_version = 'v3' "
             "WHERE snmp_version IS NULL OR snmp_version = ''"

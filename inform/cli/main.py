@@ -832,35 +832,32 @@ def remove_building(
 ## admin user section
 @app.command(name="create-admin")
 def create_admin(
-    username: str = typer.Option(..., prompt=True),
-    password: str = typer.Option(..., prompt=True, hide_input=True),
+    username: str = typer.Option(..., prompt=True, help="Stored in lowercase"),
+    password: str = typer.Option(
+        ..., prompt=True, hide_input=True, help="8 to 200 characters"
+    ),
 ):
-    """Create the first admin user"""
-    from passlib.context import CryptContext
-    from inform.core.models import User
+    """Create an account manager (10 accounts maximum)."""
+    from inform.core.accounts import AccountError, create_account
+    from inform.core.database import ensure_schema
 
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-    def get_password_hash(password: str) -> str:
-        return pwd_context.hash(password)
+    try:
+        ensure_schema()
+    except Exception as e:
+        rprint(f"[red]Error creating admin user:[/red] {e}")
+        raise typer.Exit(code=1)
 
     db: Session = SessionLocal()
     try:
-        existing = db.query(User).filter(User.username == username).first()
-        if existing:
-            rprint(f"[red]Error:[/red] User '{username}' already exists.")
-            return
-
-        hashed_password = get_password_hash(password)
-        user = User(username=username, hashed_password=hashed_password)
-        db.add(user)
-        db.commit()
-
-        rprint(f"[green]✓[/green] Admin user '{username}' created successfully.")
-
+        user = create_account(db, username, password, account_manager=True)
+        rprint(f"[green]✓[/green] Account manager '{user.username}' created successfully.")
+    except AccountError as e:
+        rprint(f"[red]Error:[/red] {e.message}")
+        raise typer.Exit(code=1)
     except Exception as e:
         db.rollback()
         rprint(f"[red]Error creating admin user:[/red] {e}")
+        raise typer.Exit(code=1)
     finally:
         db.close()
 
